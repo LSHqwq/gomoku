@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>五子棋 · AI 对战</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+    <!-- ====== 主容器 ====== -->
+    <div class="container">
+
+        <!-- ====== 顶部栏 ====== -->
+        <header>
+            <h1>♟ 五子棋 AI 对战</h1>
+            <div class="game-info">
+                <div class="status" id="gameStatus">你的回合 · 黑子先行</div>
+                <div class="turn-indicator" id="turnIndicator">●</div>
+            </div>
+        </header>
+
+        <!-- ====== 主体 ====== -->
+        <main>
+
+            <!-- 左侧：棋盘 + 控制按钮 -->
+            <div class="game-wrapper">
+                <canvas id="boardCanvas" width="600" height="600"></canvas>
+                <div class="controls">
+                    <button class="btn btn-primary" id="restartBtn">🔄 重新开局</button>
+                    <button class="btn btn-secondary" id="undoBtn" disabled>↩ 悔棋</button>
+                </div>
+            </div>
+
+            <!-- 右侧：信息面板 -->
+            <aside class="sidebar">
+                <div class="info-panel">
+                    <h3>📖 游戏规则</h3>
+                    <ul>
+                        <li>黑子（●）先行，你执黑</li>
+                        <li>白子（○）是 AI 对手</li>
+                        <li>任意一方连成 <strong>五子</strong> 即获胜</li>
+                    </ul>
+                </div>
+                <div class="move-history">
+                    <h3>📋 落子记录</h3>
+                    <div id="historyList">
+                        <span style="color: #aaa; font-size: 14px;">暂无落子</span>
+                    </div>
+                </div>
+            </aside>
+
+        </main>
+    </div>
+
+    <!-- ====== JavaScript ====== -->
+    <script src="script.js"></script>
+</body>
+</html>
