@@ -261,7 +261,7 @@ class GomokuOnline {
         gameStatusDiv.className = 'status-display win';
         gameHint.textContent = '游戏结束';
         const winnerName = data.winner || '';
-        const isMe = (data.winner_id === currentUser.id || winnerName === currentUser.username);
+        const isMe = (winnerName === currentUser.username);
         winnerDisplay.textContent = isMe ? '🎉 你赢了！' : '💪 ' + winnerName + ' 获胜';
         winDescription.textContent = '经过 ' + this.moveCount + ' 步';
         winModal.style.display = 'flex';
@@ -371,7 +371,7 @@ class GomokuOnline {
                 gameStatusDiv.textContent = '🏆 游戏结束';
                 gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束';
-                const isMe = (data.winner_id === currentUser.id || data.winner === currentUser.username);
+                const isMe = (data.winner === currentUser.username);
                 winnerDisplay.textContent = isMe ? '🎉 你赢了！' : '💪 ' + data.winner + ' 获胜';
                 winDescription.textContent = '经过 ' + this.moveCount + ' 步';
                 winModal.style.display = 'flex';
