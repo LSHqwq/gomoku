@@ -1,6 +1,5 @@
 // ========== 配置 ==========
 const API_BASE = 'https://gomoku-backend-production.up.railway.app';
-const SYNC_INTERVAL = 2000; // 对手回合时每2秒检查一次，减少请求
 let authToken = localStorage.getItem('token') || '';
 let currentUser = null;
 let currentRoom = null;
@@ -129,7 +128,7 @@ createRoomBtn.addEventListener('click', async () => {
             white_player: null
         };
         showGameRoom();
-        startSyncLoop(); // 开始轮询等待对手加入
+        startSyncLoop();
     } catch (err) {
         lobbyError.textContent = err.message;
     }
@@ -144,6 +143,7 @@ joinRoomBtn.addEventListener('click', async () => {
     
     try {
         const data = await api(`/api/rooms/${code}/join`, 'POST');
+        // 加入成功，游戏直接开始
         currentRoom = {
             room_code: data.room_code,
             status: 'playing',
@@ -151,6 +151,8 @@ joinRoomBtn.addEventListener('click', async () => {
             white_player: data.white_player
         };
         showGameRoom();
+        // 立即以 playing 状态启动
+        game.onGameStart();
         startSyncLoop();
     } catch (err) {
         lobbyError.textContent = err.message;
@@ -159,23 +161,28 @@ joinRoomBtn.addEventListener('click', async () => {
 
 // ========== 同步逻辑 ==========
 let syncTimer = null;
-let waitingForOpponent = false; // 是否在等待对手落子
+let needCheck = false; // 是否需要频繁检查
 
 function startSyncLoop() {
     stopSyncLoop();
-    waitingForOpponent = false;
-    syncLoop();
+    needCheck = true;
+    doSync();
 }
 
 function stopSyncLoop() {
+    needCheck = false;
     if (syncTimer) {
         clearTimeout(syncTimer);
         syncTimer = null;
     }
 }
 
-async function syncLoop() {
-    if (!currentRoom || !currentRoom.room_code) return;
+async function doSync() {
+    if (!needCheck) return;
+    if (!currentRoom || !currentRoom.room_code) {
+        syncTimer = setTimeout(doSync, 2000);
+        return;
+    }
     
     try {
         const data = await api(`/api/rooms/${currentRoom.room_code}`);
@@ -184,30 +191,24 @@ async function syncLoop() {
         if (data.black_player) blackName.textContent = data.black_player;
         if (data.white_player) whiteName.textContent = data.white_player;
         
-        // 对手加入 → 游戏开始
+        // 检测对手加入（房间状态从 waiting 变为 playing）
         if (data.status === 'playing' && currentRoom.status === 'waiting') {
             currentRoom.status = 'playing';
             game.onGameStart();
         }
         
-        // 检测对手是否落子了（棋盘变了且不是我的回合）
+        // 检测棋盘变化（对手落子了）
         if (data.status === 'playing' && game && !game.gameOver) {
             const serverBoard = JSON.stringify(data.board_state);
             const localBoard = JSON.stringify(game.pieces);
             
             if (serverBoard !== localBoard) {
-                // 棋盘变了，同步
                 game.syncFromServer(data);
-                
-                // 现在轮到我了吗？
-                if (data.current_turn === game.myColor) {
-                    waitingForOpponent = false;
-                }
             }
         }
         
-        // 游戏结束
-        if (data.status === 'finished' && !game.gameOver) {
+        // 检测游戏结束
+        if (data.status === 'finished' && game && !game.gameOver) {
             game.onGameEnd(data);
         }
         
@@ -217,18 +218,10 @@ async function syncLoop() {
         // 忽略
     }
     
-    // 决定下次同步时间
-    if (currentRoom && !game.gameOver) {
-        if (waitingForOpponent) {
-            // 等待对手时，1.5秒检查一次
-            syncTimer = setTimeout(syncLoop, 1500);
-        } else if (currentRoom.status === 'waiting') {
-            // 等待玩家加入，2秒检查一次
-            syncTimer = setTimeout(syncLoop, 2000);
-        } else {
-            // 我的回合，偶尔检查即可（5秒）
-            syncTimer = setTimeout(syncLoop, 5000);
-        }
+    // 决定下次检查时间
+    if (needCheck) {
+        // 统一 1 秒检查一次，确保及时同步
+        syncTimer = setTimeout(doSync, 1000);
     }
 }
 
@@ -306,7 +299,12 @@ class GomokuOnline {
         
         if (roomData) {
             this.roomCode = roomData.room_code;
-            this.myColor = roomData.black_player === currentUser.username ? 'black' : 'white';
+            // 判断自己是什么颜色
+            if (roomData.black_player === currentUser.username) {
+                this.myColor = 'black';
+            } else {
+                this.myColor = 'white';
+            }
         }
         
         this.updateUI();
@@ -316,10 +314,26 @@ class GomokuOnline {
             this.gameHintEl.textContent = '等待对手加入...';
             this.gameStatusDiv.textContent = '⏳ 等待中';
             this.gameStatusDiv.className = 'status-display';
+        } else if (roomData && roomData.status === 'playing') {
+            // 加入者进来时已经是 playing 状态，直接开始
+            this.gameStarted = true;
+            this.gameStartTime = Date.now();
+            this.startTimer();
+            
+            if (this.myColor === 'black') {
+                this.gameHintEl.textContent = '你执黑，请落子';
+            } else {
+                this.gameHintEl.textContent = '你执白，等待黑棋落子';
+            }
+            this.gameStatusDiv.textContent = '🎯 游戏进行中';
+            this.gameStatusDiv.className = 'status-display';
         }
     }
     
     onGameStart() {
+        // 防止重复启动
+        if (this.gameStarted) return;
+        
         this.gameStarted = true;
         this.gameStartTime = Date.now();
         this.startTimer();
@@ -328,7 +342,6 @@ class GomokuOnline {
             this.gameHintEl.textContent = '你执黑，请落子';
         } else {
             this.gameHintEl.textContent = '你执白，等待黑棋落子';
-            waitingForOpponent = true;
         }
         
         this.gameStatusDiv.textContent = '🎯 游戏进行中';
@@ -340,25 +353,24 @@ class GomokuOnline {
         this.gameOver = true;
         this.stopTimer();
         
-        const winnerName = data.winner_id ? 
-            (data.black_player === currentUser.username ? data.black_player : data.white_player) : '';
+        const winnerName = data.winner || data.black_player || data.white_player || '';
         
         this.gameStatusDiv.textContent = '🏆 游戏结束';
         this.gameStatusDiv.className = 'status-display win';
+        this.gameHintEl.textContent = '游戏结束';
         this.showWinModal(winnerName);
     }
     
     syncFromServer(data) {
         this.pieces = JSON.parse(JSON.stringify(data.board_state));
         this.currentTurn = data.current_turn;
-        
-        // 计算步数
-        const history = JSON.parse(data.move_history || '[]');
-        this.moveCount = history.length;
+        this.moveCount = (data.move_history || []).length;
         
         if (data.status === 'finished') {
             this.gameOver = true;
             this.stopTimer();
+            this.gameStatusDiv.textContent = '🏆 游戏结束';
+            this.gameStatusDiv.className = 'status-display win';
         }
         
         this.updateUI();
@@ -367,10 +379,8 @@ class GomokuOnline {
         if (!this.gameOver) {
             if (this.myColor === this.currentTurn) {
                 this.gameHintEl.textContent = '轮到你了！';
-                waitingForOpponent = false;
             } else {
                 this.gameHintEl.textContent = '等待对手落子...';
-                waitingForOpponent = true;
             }
         }
     }
@@ -393,7 +403,6 @@ class GomokuOnline {
     
     startTimer() {
         this.stopTimer();
-        if (!this.gameStarted) return;
         
         this.timerInterval = setInterval(() => {
             if (!this.gameOver && this.gameStartTime) {
@@ -420,11 +429,6 @@ class GomokuOnline {
         this.blackCard.classList.toggle('active-player', this.currentTurn === 'black');
         this.whiteCard.classList.toggle('active-player', this.currentTurn === 'white');
         this.moveCountSpan.textContent = this.moveCount;
-        
-        if (!this.gameOver && this.gameStarted) {
-            this.gameStatusDiv.textContent = '🎯 游戏进行中';
-            this.gameStatusDiv.className = 'status-display';
-        }
     }
     
     drawBoard(hoverX = -1, hoverY = -1) {
@@ -554,9 +558,8 @@ class GomokuOnline {
         try {
             const data = await api(`/api/rooms/${this.roomCode}/move`, 'POST', { x, y });
             
-            // 立即更新本地
             this.pieces = JSON.parse(JSON.stringify(data.board_state));
-            this.moveCount++;
+            this.moveCount = (data.move_history || []).length;
             
             if (data.game_over) {
                 this.gameOver = true;
@@ -568,18 +571,21 @@ class GomokuOnline {
             } else {
                 this.currentTurn = data.current_turn;
                 this.gameHintEl.textContent = '等待对手落子...';
-                waitingForOpponent = true;
             }
             
             this.updateUI();
             this.drawBoard();
         } catch (err) {
-            // 失败，等下次同步修复
+            // 失败，下次同步修复
         }
     }
     
     showWinModal(winnerName) {
-        winnerDisplay.textContent = winnerName === currentUser.username ? '🎉 你赢了！' : `💪 ${winnerName} 获胜`;
+        if (winnerName === currentUser.username) {
+            winnerDisplay.textContent = '🎉 你赢了！';
+        } else {
+            winnerDisplay.textContent = `💪 ${winnerName} 获胜`;
+        }
         winDescription.textContent = `经过 ${this.moveCount} 步`;
         winModal.style.display = 'flex';
     }
