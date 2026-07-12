@@ -5,7 +5,7 @@ let currentUser = null;
 let currentRoom = null;
 let game = null;
 
-// ========== DOM 元素 ==========
+// DOM 元素
 const authModal = document.getElementById('auth-modal');
 const lobby = document.getElementById('lobby');
 const gameRoom = document.getElementById('game-room');
@@ -32,34 +32,19 @@ const winnerDisplay = document.getElementById('winner-display');
 const winDescription = document.getElementById('win-description');
 const modalRestartBtn = document.getElementById('modal-restart-btn');
 
-// ========== API 封装 ==========
+// API
 async function api(path, method = 'GET', body = null) {
-    const options = {
-        method,
-        headers: { 'Content-Type': 'application/json' }
-    };
-    
-    if (authToken) {
-        options.headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    
-    if (body) {
-        options.body = JSON.stringify(body);
-    }
-    
+    const options = { method, headers: { 'Content-Type': 'application/json' } };
+    if (authToken) options.headers['Authorization'] = `Bearer ${authToken}`;
+    if (body) options.body = JSON.stringify(body);
     const res = await fetch(`${API_BASE}${path}`, options);
     const data = await res.json();
-    
-    if (!res.ok) {
-        throw new Error(data.error || '请求失败');
-    }
-    
+    if (!res.ok) throw new Error(data.error || '请求失败');
     return data;
 }
 
 // ========== 认证 ==========
 let isRegister = false;
-
 authSwitchLink.addEventListener('click', (e) => {
     e.preventDefault();
     isRegister = !isRegister;
@@ -73,32 +58,23 @@ authSwitchLink.addEventListener('click', (e) => {
 authSubmitBtn.addEventListener('click', async () => {
     const username = authUsername.value.trim();
     const password = authPassword.value;
-    
-    if (!username || !password) {
-        authError.textContent = '请填写完整';
-        return;
-    }
-    
+    if (!username || !password) { authError.textContent = '请填写完整'; return; }
     try {
         const path = isRegister ? '/api/register' : '/api/login';
         const data = await api(path, 'POST', { username, password });
-        
         authToken = data.token;
         currentUser = data.user;
         localStorage.setItem('token', authToken);
-        
         authModal.style.display = 'none';
         showLobby();
-    } catch (err) {
-        authError.textContent = err.message;
-    }
+    } catch (err) { authError.textContent = err.message; }
 });
 
 logoutBtn.addEventListener('click', () => {
     authToken = '';
     currentUser = null;
     localStorage.removeItem('token');
-    stopSyncLoop();
+    stopSync();
     showAuthModal();
 });
 
@@ -116,34 +92,23 @@ function showLobby() {
     displayUsername.textContent = `👤 ${currentUser.username}`;
     logoutBtn.style.display = 'block';
     lobbyError.textContent = '';
+    joinRoomInput.value = '';
 }
 
 createRoomBtn.addEventListener('click', async () => {
     try {
         const data = await api('/api/rooms', 'POST');
-        currentRoom = {
-            room_code: data.room_code,
-            status: 'waiting',
-            black_player: currentUser.username,
-            white_player: null
-        };
+        currentRoom = { room_code: data.room_code, status: 'waiting' };
         showGameRoom();
-        startSyncLoop();
-    } catch (err) {
-        lobbyError.textContent = err.message;
-    }
+        startSync();
+    } catch (err) { lobbyError.textContent = err.message; }
 });
 
 joinRoomBtn.addEventListener('click', async () => {
     const code = joinRoomInput.value.trim().toUpperCase();
-    if (!code) {
-        lobbyError.textContent = '请输入房间号';
-        return;
-    }
-    
+    if (!code) { lobbyError.textContent = '请输入房间号'; return; }
     try {
         const data = await api(`/api/rooms/${code}/join`, 'POST');
-        // 加入成功，游戏直接开始
         currentRoom = {
             room_code: data.room_code,
             status: 'playing',
@@ -151,57 +116,46 @@ joinRoomBtn.addEventListener('click', async () => {
             white_player: data.white_player
         };
         showGameRoom();
-        // 立即以 playing 状态启动
+        // 加入者：游戏直接开始，我是白方
+        game.myColor = 'white';
         game.onGameStart();
-        startSyncLoop();
-    } catch (err) {
-        lobbyError.textContent = err.message;
-    }
+        startSync();
+    } catch (err) { lobbyError.textContent = err.message; }
 });
 
-// ========== 同步逻辑 ==========
+// ========== 同步 ==========
 let syncTimer = null;
-let needCheck = false; // 是否需要频繁检查
 
-function startSyncLoop() {
-    stopSyncLoop();
-    needCheck = true;
+function startSync() {
+    stopSync();
     doSync();
 }
 
-function stopSyncLoop() {
-    needCheck = false;
-    if (syncTimer) {
-        clearTimeout(syncTimer);
-        syncTimer = null;
-    }
+function stopSync() {
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
 }
 
 async function doSync() {
-    if (!needCheck) return;
-    if (!currentRoom || !currentRoom.room_code) {
-        syncTimer = setTimeout(doSync, 2000);
-        return;
-    }
+    if (!currentRoom || !currentRoom.room_code) return;
     
     try {
         const data = await api(`/api/rooms/${currentRoom.room_code}`);
         
-        // 更新玩家名
+        // 更新显示
         if (data.black_player) blackName.textContent = data.black_player;
         if (data.white_player) whiteName.textContent = data.white_player;
         
-        // 检测对手加入（房间状态从 waiting 变为 playing）
+        // 房主：检测对手加入
         if (data.status === 'playing' && currentRoom.status === 'waiting') {
             currentRoom.status = 'playing';
+            game.myColor = 'black';
             game.onGameStart();
         }
         
-        // 检测棋盘变化（对手落子了）
-        if (data.status === 'playing' && game && !game.gameOver) {
+        // 检测棋盘变化
+        if (game && !game.gameOver) {
             const serverBoard = JSON.stringify(data.board_state);
             const localBoard = JSON.stringify(game.pieces);
-            
             if (serverBoard !== localBoard) {
                 game.syncFromServer(data);
             }
@@ -213,16 +167,9 @@ async function doSync() {
         }
         
         currentRoom.status = data.status;
-        
-    } catch (err) {
-        // 忽略
-    }
+    } catch (err) {}
     
-    // 决定下次检查时间
-    if (needCheck) {
-        // 统一 1 秒检查一次，确保及时同步
-        syncTimer = setTimeout(doSync, 1000);
-    }
+    syncTimer = setTimeout(doSync, 1000);
 }
 
 // ========== 游戏界面 ==========
@@ -230,17 +177,17 @@ function showGameRoom() {
     lobby.style.display = 'none';
     gameRoom.style.display = 'flex';
     roomCodeDisplay.textContent = `房间: ${currentRoom.room_code}`;
+    blackName.textContent = currentRoom.black_player || '等待中';
+    whiteName.textContent = currentRoom.white_player || '等待中';
     
-    if (!game) {
-        game = new GomokuOnline();
-    }
+    if (!game) game = new GomokuOnline();
     game.reset(currentRoom);
 }
 
 leaveRoomBtn.addEventListener('click', () => {
-    stopSyncLoop();
+    stopSync();
     currentRoom = null;
-    if (game) game.cleanup();
+    game.cleanup();
     showLobby();
 });
 
@@ -249,13 +196,13 @@ modalRestartBtn.addEventListener('click', async () => {
     if (currentRoom) {
         try {
             await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST');
-            game.reset({ ...currentRoom, status: 'playing' });
+            game.reset(currentRoom);
             game.onGameStart();
         } catch (err) {}
     }
 });
 
-// ========== 五子棋游戏类 ==========
+// ========== 游戏类 ==========
 class GomokuOnline {
     constructor() {
         this.boardSize = 15;
@@ -269,23 +216,13 @@ class GomokuOnline {
         this.gameStartTime = null;
         this.timerInterval = null;
         this.myColor = null;
-        this.roomCode = '';
-        
+
         this.canvas = document.getElementById('board');
         this.ctx = this.canvas.getContext('2d');
-        this.turnIndicator = document.getElementById('turn-indicator');
-        this.currentPlayerText = document.getElementById('current-player-text');
-        this.moveCountSpan = document.getElementById('move-count');
-        this.gameTimeSpan = document.getElementById('game-time');
-        this.gameStatusDiv = document.getElementById('game-status');
-        this.blackCard = document.getElementById('black-player-card');
-        this.whiteCard = document.getElementById('white-player-card');
-        this.gameHintEl = document.getElementById('game-hint');
-        
         this.bindEvents();
         this.drawBoard();
     }
-    
+
     reset(roomData) {
         this.pieces = Array(15).fill(null).map(() => Array(15).fill(null));
         this.currentTurn = 'black';
@@ -293,74 +230,54 @@ class GomokuOnline {
         this.moveCount = 0;
         this.gameStarted = false;
         this.gameStartTime = null;
-        
         this.stopTimer();
-        this.gameTimeSpan.textContent = '00:00';
         
-        if (roomData) {
-            this.roomCode = roomData.room_code;
-            // 判断自己是什么颜色
-            if (roomData.black_player === currentUser.username) {
-                this.myColor = 'black';
-            } else {
-                this.myColor = 'white';
-            }
+        document.getElementById('game-time').textContent = '00:00';
+        document.getElementById('move-count').textContent = '0';
+        document.getElementById('game-status').textContent = '';
+        document.getElementById('game-status').className = 'status-display';
+        document.getElementById('game-hint').textContent = '';
+        document.getElementById('turn-indicator').className = 'turn-display black-turn';
+        document.getElementById('current-player-text').textContent = '黑棋走子';
+        
+        if (roomData && roomData.status === 'waiting') {
+            document.getElementById('game-hint').textContent = '等待对手加入...';
+            document.getElementById('game-status').textContent = '⏳ 等待中';
         }
         
         this.updateUI();
         this.drawBoard();
-        
-        if (roomData && roomData.status === 'waiting') {
-            this.gameHintEl.textContent = '等待对手加入...';
-            this.gameStatusDiv.textContent = '⏳ 等待中';
-            this.gameStatusDiv.className = 'status-display';
-        } else if (roomData && roomData.status === 'playing') {
-            // 加入者进来时已经是 playing 状态，直接开始
-            this.gameStarted = true;
-            this.gameStartTime = Date.now();
-            this.startTimer();
-            
-            if (this.myColor === 'black') {
-                this.gameHintEl.textContent = '你执黑，请落子';
-            } else {
-                this.gameHintEl.textContent = '你执白，等待黑棋落子';
-            }
-            this.gameStatusDiv.textContent = '🎯 游戏进行中';
-            this.gameStatusDiv.className = 'status-display';
-        }
     }
-    
+
     onGameStart() {
-        // 防止重复启动
         if (this.gameStarted) return;
-        
         this.gameStarted = true;
         this.gameStartTime = Date.now();
         this.startTimer();
         
-        if (this.myColor === 'black') {
-            this.gameHintEl.textContent = '你执黑，请落子';
-        } else {
-            this.gameHintEl.textContent = '你执白，等待黑棋落子';
-        }
+        document.getElementById('game-status').textContent = '🎯 游戏进行中';
+        document.getElementById('game-status').className = 'status-display';
         
-        this.gameStatusDiv.textContent = '🎯 游戏进行中';
-        this.gameStatusDiv.className = 'status-display';
+        if (this.myColor === 'black') {
+            document.getElementById('game-hint').textContent = '你执黑，请落子';
+        } else {
+            document.getElementById('game-hint').textContent = '你执白，等待黑棋落子';
+        }
         this.updateUI();
     }
-    
+
     onGameEnd(data) {
         this.gameOver = true;
         this.stopTimer();
-        
-        const winnerName = data.winner || data.black_player || data.white_player || '';
-        
-        this.gameStatusDiv.textContent = '🏆 游戏结束';
-        this.gameStatusDiv.className = 'status-display win';
-        this.gameHintEl.textContent = '游戏结束';
-        this.showWinModal(winnerName);
+        const winner = data.winner || '';
+        document.getElementById('game-status').textContent = '🏆 游戏结束';
+        document.getElementById('game-status').className = 'status-display win';
+        document.getElementById('game-hint').textContent = '游戏结束';
+        document.getElementById('winner-display').textContent = winner === currentUser.username ? '🎉 你赢了！' : `💪 ${winner} 获胜`;
+        document.getElementById('win-description').textContent = `经过 ${this.moveCount} 步`;
+        document.getElementById('win-modal').style.display = 'flex';
     }
-    
+
     syncFromServer(data) {
         this.pieces = JSON.parse(JSON.stringify(data.board_state));
         this.currentTurn = data.current_turn;
@@ -369,244 +286,147 @@ class GomokuOnline {
         if (data.status === 'finished') {
             this.gameOver = true;
             this.stopTimer();
-            this.gameStatusDiv.textContent = '🏆 游戏结束';
-            this.gameStatusDiv.className = 'status-display win';
+            document.getElementById('game-status').textContent = '🏆 游戏结束';
+            document.getElementById('game-status').className = 'status-display win';
+            document.getElementById('game-hint').textContent = '游戏结束';
+        } else {
+            if (this.myColor === this.currentTurn) {
+                document.getElementById('game-hint').textContent = '轮到你了！';
+            } else {
+                document.getElementById('game-hint').textContent = '等待对手落子...';
+            }
         }
         
         this.updateUI();
         this.drawBoard();
-        
-        if (!this.gameOver) {
-            if (this.myColor === this.currentTurn) {
-                this.gameHintEl.textContent = '轮到你了！';
-            } else {
-                this.gameHintEl.textContent = '等待对手落子...';
-            }
-        }
     }
-    
+
     bindEvents() {
         this.canvas.addEventListener('click', (e) => this.handleClick(e));
         this.canvas.addEventListener('mousemove', (e) => this.handleHover(e));
         this.canvas.addEventListener('mouseleave', () => this.drawBoard());
         
         document.getElementById('restart-btn').addEventListener('click', async () => {
-            if (currentRoom && this.gameOver) {
+            if (currentRoom) {
                 try {
                     await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST');
-                    this.reset({ ...currentRoom, status: 'playing' });
+                    this.reset(currentRoom);
                     this.onGameStart();
                 } catch (err) {}
             }
         });
     }
-    
+
     startTimer() {
         this.stopTimer();
-        
         this.timerInterval = setInterval(() => {
             if (!this.gameOver && this.gameStartTime) {
                 const elapsed = Math.floor((Date.now() - this.gameStartTime) / 1000);
-                const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
-                const seconds = (elapsed % 60).toString().padStart(2, '0');
-                this.gameTimeSpan.textContent = `${minutes}:${seconds}`;
+                const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+                const s = (elapsed % 60).toString().padStart(2, '0');
+                document.getElementById('game-time').textContent = `${m}:${s}`;
             }
         }, 1000);
     }
-    
+
     stopTimer() {
-        if (this.timerInterval) {
-            clearInterval(this.timerInterval);
-            this.timerInterval = null;
-        }
+        if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; }
     }
-    
+
     updateUI() {
-        this.turnIndicator.className = 'turn-display ' + 
-            (this.currentTurn === 'black' ? 'black-turn' : 'white-turn');
-        this.currentPlayerText.textContent = 
-            this.currentTurn === 'black' ? '黑棋走子' : '白棋走子';
-        this.blackCard.classList.toggle('active-player', this.currentTurn === 'black');
-        this.whiteCard.classList.toggle('active-player', this.currentTurn === 'white');
-        this.moveCountSpan.textContent = this.moveCount;
+        document.getElementById('turn-indicator').className = 'turn-display ' + (this.currentTurn === 'black' ? 'black-turn' : 'white-turn');
+        document.getElementById('current-player-text').textContent = this.currentTurn === 'black' ? '黑棋走子' : '白棋走子';
+        document.getElementById('black-player-card').classList.toggle('active-player', this.currentTurn === 'black');
+        document.getElementById('white-player-card').classList.toggle('active-player', this.currentTurn === 'white');
+        document.getElementById('move-count').textContent = this.moveCount;
     }
-    
-    drawBoard(hoverX = -1, hoverY = -1) {
-        const ctx = this.ctx;
-        const size = this.boardSize;
-        const cellSize = this.cellSize;
-        const padding = this.padding;
-        
+
+    drawBoard(hx = -1, hy = -1) {
+        const ctx = this.ctx, pad = this.padding, cell = this.cellSize, size = this.boardSize;
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        const boardGradient = ctx.createLinearGradient(0, 0, this.canvas.width, this.canvas.height);
-        boardGradient.addColorStop(0, '#dcb35c');
-        boardGradient.addColorStop(1, '#c9a03a');
-        ctx.fillStyle = boardGradient;
-        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        const bg = ctx.createLinearGradient(0, 0, this.canvas.width, this.canvas.height);
+        bg.addColorStop(0, '#dcb35c'); bg.addColorStop(1, '#c9a03a');
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         
-        ctx.strokeStyle = '#5a4a2a';
-        ctx.lineWidth = 1;
-        
+        ctx.strokeStyle = '#5a4a2a'; ctx.lineWidth = 1;
         for (let i = 0; i < size; i++) {
-            ctx.beginPath();
-            ctx.moveTo(padding + i * cellSize, padding);
-            ctx.lineTo(padding + i * cellSize, padding + (size - 1) * cellSize);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(padding, padding + i * cellSize);
-            ctx.lineTo(padding + (size - 1) * cellSize, padding + i * cellSize);
-            ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(pad + i * cell, pad); ctx.lineTo(pad + i * cell, pad + (size - 1) * cell); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(pad, pad + i * cell); ctx.lineTo(pad + (size - 1) * cell, pad + i * cell); ctx.stroke();
         }
+        ctx.strokeStyle = '#3a2a0a'; ctx.lineWidth = 3;
+        ctx.strokeRect(pad, pad, (size - 1) * cell, (size - 1) * cell);
         
-        ctx.strokeStyle = '#3a2a0a';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(padding, padding, (size - 1) * cellSize, (size - 1) * cellSize);
-        
-        const starPoints = [[3,3],[3,7],[3,11],[7,3],[7,7],[7,11],[11,3],[11,7],[11,11]];
-        starPoints.forEach(([x, y]) => {
-            ctx.beginPath();
-            ctx.arc(padding + x * cellSize, padding + y * cellSize, 4, 0, Math.PI * 2);
-            ctx.fillStyle = '#3a2a0a';
-            ctx.fill();
+        [[3,3],[3,7],[3,11],[7,3],[7,7],[7,11],[11,3],[11,7],[11,11]].forEach(([x, y]) => {
+            ctx.beginPath(); ctx.arc(pad + x * cell, pad + y * cell, 4, 0, Math.PI * 2); ctx.fillStyle = '#3a2a0a'; ctx.fill();
         });
         
-        this.pieces.forEach((row, y) => {
-            row.forEach((piece, x) => {
-                if (piece) this.drawPiece(x, y, piece, false);
-            });
-        });
+        this.pieces.forEach((row, y) => row.forEach((p, x) => { if (p) this.drawPiece(x, y, p, false); }));
         
-        if (!this.gameOver && this.gameStarted && this.myColor === this.currentTurn) {
-            if (hoverX >= 0 && hoverX < size && hoverY >= 0 && hoverY < size && !this.pieces[hoverY][hoverX]) {
-                this.drawPiece(hoverX, hoverY, this.currentTurn, true);
-            }
+        if (!this.gameOver && this.gameStarted && this.myColor === this.currentTurn && hx >= 0 && hx < size && hy >= 0 && hy < size && !this.pieces[hy][hx]) {
+            this.drawPiece(hx, hy, this.currentTurn, true);
         }
     }
-    
-    drawPiece(x, y, color, isPreview = false) {
-        const ctx = this.ctx;
-        const cx = this.padding + x * this.cellSize;
-        const cy = this.padding + y * this.cellSize;
-        const radius = this.cellSize / 2 - 2;
-        
-        ctx.save();
-        if (isPreview) ctx.globalAlpha = 0.4;
-        
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        
-        const gradient = ctx.createRadialGradient(cx - 3, cy - 3, 2, cx, cy, radius);
-        if (color === 'black') {
-            gradient.addColorStop(0, '#555');
-            gradient.addColorStop(0.7, '#111');
-            gradient.addColorStop(1, '#000');
-        } else {
-            gradient.addColorStop(0, '#fff');
-            gradient.addColorStop(0.7, '#eee');
-            gradient.addColorStop(1, '#ccc');
-        }
-        ctx.fillStyle = gradient;
-        ctx.fill();
-        ctx.strokeStyle = '#333';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        
+
+    drawPiece(x, y, color, preview) {
+        const ctx = this.ctx, cx = this.padding + x * this.cellSize, cy = this.padding + y * this.cellSize, r = this.cellSize / 2 - 2;
+        ctx.save(); if (preview) ctx.globalAlpha = 0.4;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        const g = ctx.createRadialGradient(cx - 3, cy - 3, 2, cx, cy, r);
+        if (color === 'black') { g.addColorStop(0, '#555'); g.addColorStop(0.7, '#111'); g.addColorStop(1, '#000'); }
+        else { g.addColorStop(0, '#fff'); g.addColorStop(0.7, '#eee'); g.addColorStop(1, '#ccc'); }
+        ctx.fillStyle = g; ctx.fill();
+        ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
         ctx.restore();
     }
-    
+
     handleClick(e) {
         if (this.gameOver || !this.gameStarted || this.myColor !== this.currentTurn) return;
-        
         const rect = this.canvas.getBoundingClientRect();
-        const scaleX = this.canvas.width / rect.width;
-        const scaleY = this.canvas.height / rect.height;
-        
-        const mouseX = (e.clientX - rect.left) * scaleX;
-        const mouseY = (e.clientY - rect.top) * scaleY;
-        
-        const x = Math.round((mouseX - this.padding) / this.cellSize);
-        const y = Math.round((mouseY - this.padding) / this.cellSize);
-        
-        if (x < 0 || x >= this.boardSize || y < 0 || y >= this.boardSize) return;
-        if (this.pieces[y][x]) return;
-        
+        const sx = this.canvas.width / rect.width, sy = this.canvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * sx, my = (e.clientY - rect.top) * sy;
+        const x = Math.round((mx - this.padding) / this.cellSize), y = Math.round((my - this.padding) / this.cellSize);
+        if (x < 0 || x >= 15 || y < 0 || y >= 15 || this.pieces[y][x]) return;
         this.makeMove(x, y);
     }
-    
+
     handleHover(e) {
         if (this.gameOver || !this.gameStarted || this.myColor !== this.currentTurn) return;
-        
         const rect = this.canvas.getBoundingClientRect();
-        const scaleX = this.canvas.width / rect.width;
-        const scaleY = this.canvas.height / rect.height;
-        
-        const mouseX = (e.clientX - rect.left) * scaleX;
-        const mouseY = (e.clientY - rect.top) * scaleY;
-        
-        const x = Math.round((mouseX - this.padding) / this.cellSize);
-        const y = Math.round((mouseY - this.padding) / this.cellSize);
-        
-        if (x >= 0 && x < this.boardSize && y >= 0 && y < this.boardSize && !this.pieces[y][x]) {
-            this.drawBoard(x, y);
-        } else {
-            this.drawBoard();
-        }
+        const sx = this.canvas.width / rect.width, sy = this.canvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * sx, my = (e.clientY - rect.top) * sy;
+        const x = Math.round((mx - this.padding) / this.cellSize), y = Math.round((my - this.padding) / this.cellSize);
+        if (x >= 0 && x < 15 && y >= 0 && y < 15 && !this.pieces[y][x]) this.drawBoard(x, y);
+        else this.drawBoard();
     }
-    
+
     async makeMove(x, y) {
         try {
-            const data = await api(`/api/rooms/${this.roomCode}/move`, 'POST', { x, y });
-            
+            const data = await api(`/api/rooms/${this.currentRoomCode || currentRoom.room_code}/move`, 'POST', { x, y });
             this.pieces = JSON.parse(JSON.stringify(data.board_state));
             this.moveCount = (data.move_history || []).length;
-            
             if (data.game_over) {
-                this.gameOver = true;
-                this.stopTimer();
-                this.gameStatusDiv.textContent = `🏆 ${data.winner} 获胜！`;
-                this.gameStatusDiv.className = 'status-display win';
-                this.gameHintEl.textContent = '游戏结束';
-                this.showWinModal(data.winner);
+                this.gameOver = true; this.stopTimer();
+                document.getElementById('game-status').textContent = `🏆 ${data.winner} 获胜！`;
+                document.getElementById('game-status').className = 'status-display win';
+                document.getElementById('game-hint').textContent = '游戏结束';
+                document.getElementById('winner-display').textContent = data.winner === currentUser.username ? '🎉 你赢了！' : `💪 ${data.winner} 获胜`;
+                document.getElementById('win-description').textContent = `经过 ${this.moveCount} 步`;
+                document.getElementById('win-modal').style.display = 'flex';
             } else {
                 this.currentTurn = data.current_turn;
-                this.gameHintEl.textContent = '等待对手落子...';
+                document.getElementById('game-hint').textContent = '等待对手落子...';
             }
-            
-            this.updateUI();
-            this.drawBoard();
-        } catch (err) {
-            // 失败，下次同步修复
-        }
+            this.updateUI(); this.drawBoard();
+        } catch (err) {}
     }
-    
-    showWinModal(winnerName) {
-        if (winnerName === currentUser.username) {
-            winnerDisplay.textContent = '🎉 你赢了！';
-        } else {
-            winnerDisplay.textContent = `💪 ${winnerName} 获胜`;
-        }
-        winDescription.textContent = `经过 ${this.moveCount} 步`;
-        winModal.style.display = 'flex';
-    }
-    
-    cleanup() {
-        this.stopTimer();
-    }
+
+    cleanup() { this.stopTimer(); }
 }
 
-// ========== 初始化 ==========
+// 初始化
 window.addEventListener('DOMContentLoaded', () => {
     if (authToken) {
-        api('/api/me').then(user => {
-            currentUser = user;
-            showLobby();
-        }).catch(() => {
-            localStorage.removeItem('token');
-            authToken = '';
-            showAuthModal();
-        });
-    } else {
-        showAuthModal();
-    }
+        api('/api/me').then(u => { currentUser = u; showLobby(); }).catch(() => { localStorage.removeItem('token'); authToken = ''; showAuthModal(); });
+    } else showAuthModal();
 });
