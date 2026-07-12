@@ -254,8 +254,14 @@ class GomokuOnline {
         gameStatusDiv.className = 'status-display win';
         gameHint.textContent = '游戏结束';
         const winnerName = data.winner || '';
-        const isMe = (winnerName === currentUser.username);
-        winnerDisplay.textContent = isMe ? '🎉 你赢了！' : '💪 ' + winnerName + ' 获胜';
+        const isMe = currentUser && winnerName === currentUser.username;
+        if (isMe) {
+            winnerDisplay.textContent = '🎉 你赢了！';
+        } else if (winnerName) {
+            winnerDisplay.textContent = '很遗憾，你输了，' + winnerName + ' 获胜';
+        } else {
+            winnerDisplay.textContent = '游戏结束';
+        }
         winDescription.textContent = '经过 ' + this.moveCount + ' 步';
         winModal.style.display = 'flex';
         this.drawBoard();
@@ -364,8 +370,15 @@ class GomokuOnline {
                 gameStatusDiv.textContent = '🏆 游戏结束';
                 gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束';
-                const isMe = (data.winner === currentUser.username);
-                winnerDisplay.textContent = isMe ? '🎉 你赢了！' : '💪 ' + data.winner + ' 获胜';
+                const winnerName = data.winner || '';
+                const isMe = currentUser && winnerName === currentUser.username;
+                if (isMe) {
+                    winnerDisplay.textContent = '🎉 你赢了！';
+                } else if (winnerName) {
+                    winnerDisplay.textContent = '很遗憾，你输了，' + winnerName + ' 获胜';
+                } else {
+                    winnerDisplay.textContent = '游戏结束';
+                }
                 winDescription.textContent = '经过 ' + this.moveCount + ' 步';
                 winModal.style.display = 'flex';
             } else {
