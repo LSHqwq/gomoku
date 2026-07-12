@@ -1,5 +1,6 @@
 // ========== 配置 ==========
 const API_BASE = 'https://gomoku-backend-production.up.railway.app';
+const SYNC_INTERVAL = 2000; // 对手回合时每2秒检查一次，减少请求
 let authToken = localStorage.getItem('token') || '';
 let currentUser = null;
 let currentRoom = null;
@@ -98,6 +99,7 @@ logoutBtn.addEventListener('click', () => {
     authToken = '';
     currentUser = null;
     localStorage.removeItem('token');
+    stopSyncLoop();
     showAuthModal();
 });
 
@@ -114,14 +116,20 @@ function showLobby() {
     gameRoom.style.display = 'none';
     displayUsername.textContent = `👤 ${currentUser.username}`;
     logoutBtn.style.display = 'block';
+    lobbyError.textContent = '';
 }
 
 createRoomBtn.addEventListener('click', async () => {
     try {
         const data = await api('/api/rooms', 'POST');
-        currentRoom = data;
+        currentRoom = {
+            room_code: data.room_code,
+            status: 'waiting',
+            black_player: currentUser.username,
+            white_player: null
+        };
         showGameRoom();
-        startPolling();
+        startSyncLoop(); // 开始轮询等待对手加入
     } catch (err) {
         lobbyError.textContent = err.message;
     }
@@ -136,17 +144,95 @@ joinRoomBtn.addEventListener('click', async () => {
     
     try {
         const data = await api(`/api/rooms/${code}/join`, 'POST');
-        currentRoom = data;
+        currentRoom = {
+            room_code: data.room_code,
+            status: 'playing',
+            black_player: data.black_player,
+            white_player: data.white_player
+        };
         showGameRoom();
-        startPolling();
+        startSyncLoop();
     } catch (err) {
         lobbyError.textContent = err.message;
     }
 });
 
-// ========== 游戏界面 ==========
-let pollingInterval = null;
+// ========== 同步逻辑 ==========
+let syncTimer = null;
+let waitingForOpponent = false; // 是否在等待对手落子
 
+function startSyncLoop() {
+    stopSyncLoop();
+    waitingForOpponent = false;
+    syncLoop();
+}
+
+function stopSyncLoop() {
+    if (syncTimer) {
+        clearTimeout(syncTimer);
+        syncTimer = null;
+    }
+}
+
+async function syncLoop() {
+    if (!currentRoom || !currentRoom.room_code) return;
+    
+    try {
+        const data = await api(`/api/rooms/${currentRoom.room_code}`);
+        
+        // 更新玩家名
+        if (data.black_player) blackName.textContent = data.black_player;
+        if (data.white_player) whiteName.textContent = data.white_player;
+        
+        // 对手加入 → 游戏开始
+        if (data.status === 'playing' && currentRoom.status === 'waiting') {
+            currentRoom.status = 'playing';
+            game.onGameStart();
+        }
+        
+        // 检测对手是否落子了（棋盘变了且不是我的回合）
+        if (data.status === 'playing' && game && !game.gameOver) {
+            const serverBoard = JSON.stringify(data.board_state);
+            const localBoard = JSON.stringify(game.pieces);
+            
+            if (serverBoard !== localBoard) {
+                // 棋盘变了，同步
+                game.syncFromServer(data);
+                
+                // 现在轮到我了吗？
+                if (data.current_turn === game.myColor) {
+                    waitingForOpponent = false;
+                }
+            }
+        }
+        
+        // 游戏结束
+        if (data.status === 'finished' && !game.gameOver) {
+            game.onGameEnd(data);
+        }
+        
+        currentRoom.status = data.status;
+        
+    } catch (err) {
+        // 忽略
+    }
+    
+    // 决定下次同步时间
+    if (currentRoom && !game.gameOver) {
+        if (waitingForOpponent) {
+            // 等待对手时，1.5秒检查一次
+            syncTimer = setTimeout(syncLoop, 1500);
+        } else if (currentRoom.status === 'waiting') {
+            // 等待玩家加入，2秒检查一次
+            syncTimer = setTimeout(syncLoop, 2000);
+        } else {
+            // 我的回合，偶尔检查即可（5秒）
+            syncTimer = setTimeout(syncLoop, 5000);
+        }
+    }
+}
+
+// ========== 游戏界面 ==========
 function showGameRoom() {
     lobby.style.display = 'none';
     gameRoom.style.display = 'flex';
@@ -158,83 +244,37 @@ function showGameRoom() {
     game.reset(currentRoom);
 }
 
-function startPolling() {
-    if (pollingInterval) clearInterval(pollingInterval);
-    
-    pollingInterval = setInterval(async () => {
-        if (!currentRoom) return;
-        
-        try {
-            const data = await api(`/api/rooms/${currentRoom.room_code}`);
-            
-            // 更新玩家信息
-            if (data.black_player) blackName.textContent = data.black_player;
-            if (data.white_player) whiteName.textContent = data.white_player;
-            
-            // 对手加入了
-            if (data.status === 'playing' && currentRoom.status === 'waiting') {
-                currentRoom.status = 'playing';
-                gameHint.textContent = '游戏开始！';
-            }
-            
-            // 游戏结束
-            if (data.status === 'finished') {
-                gameHint.textContent = '游戏结束';
-                if (game) {
-                    game.syncBoard(data.board_state);
-                    game.gameOver = true;
-                    const winner = data.black_player && data.winner_id ? 
-                        (data.winner_id === game.myColor === 'black' ? data.black_player : data.white_player) : '';
-                    game.showWin(winner || '对方');
-                }
-            }
-            
-            currentRoom = { ...currentRoom, ...data };
-        } catch (err) {
-            // 忽略轮询错误
-        }
-    }, 1000);
-}
-
-function stopPolling() {
-    if (pollingInterval) {
-        clearInterval(pollingInterval);
-        pollingInterval = null;
-    }
-}
-
 leaveRoomBtn.addEventListener('click', () => {
-    stopPolling();
+    stopSyncLoop();
     currentRoom = null;
-    if (game) game.reset();
+    if (game) game.cleanup();
     showLobby();
 });
 
 modalRestartBtn.addEventListener('click', async () => {
-    try {
-        await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST');
-        winModal.style.display = 'none';
-        if (game) game.reset(currentRoom);
-        gameHint.textContent = '新游戏开始！';
-    } catch (err) {
-        // 处理错误
+    winModal.style.display = 'none';
+    if (currentRoom) {
+        try {
+            await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST');
+            game.reset({ ...currentRoom, status: 'playing' });
+            game.onGameStart();
+        } catch (err) {}
     }
 });
 
-// ========== 五子棋游戏类（在线版） ==========
+// ========== 五子棋游戏类 ==========
 class GomokuOnline {
     constructor() {
         this.boardSize = 15;
         this.cellSize = 40;
         this.padding = 20;
-        this.pieces = [];
-        this.history = [];
-        this.currentPlayer = 'black';
+        this.pieces = Array(15).fill(null).map(() => Array(15).fill(null));
+        this.currentTurn = 'black';
         this.gameOver = false;
         this.moveCount = 0;
-        this.gameStartTime = Date.now();
+        this.gameStarted = false;
+        this.gameStartTime = null;
         this.timerInterval = null;
-        this.winLine = null;
         this.myColor = null;
         this.roomCode = '';
         
@@ -247,19 +287,22 @@ class GomokuOnline {
         this.gameStatusDiv = document.getElementById('game-status');
         this.blackCard = document.getElementById('black-player-card');
         this.whiteCard = document.getElementById('white-player-card');
+        this.gameHintEl = document.getElementById('game-hint');
         
         this.bindEvents();
         this.drawBoard();
     }
     
     reset(roomData) {
-        this.pieces = Array(this.boardSize).fill(null).map(() => Array(this.boardSize).fill(null));
-        this.history = [];
-        this.currentPlayer = 'black';
+        this.pieces = Array(15).fill(null).map(() => Array(15).fill(null));
+        this.currentTurn = 'black';
         this.gameOver = false;
         this.moveCount = 0;
-        this.winLine = null;
-        this.gameStartTime = Date.now();
+        this.gameStarted = false;
+        this.gameStartTime = null;
+        
+        this.stopTimer();
+        this.gameTimeSpan.textContent = '00:00';
         
         if (roomData) {
             this.roomCode = roomData.room_code;
@@ -268,12 +311,68 @@ class GomokuOnline {
         
         this.updateUI();
         this.drawBoard();
-        this.startTimer();
+        
+        if (roomData && roomData.status === 'waiting') {
+            this.gameHintEl.textContent = '等待对手加入...';
+            this.gameStatusDiv.textContent = '⏳ 等待中';
+            this.gameStatusDiv.className = 'status-display';
+        }
     }
     
-    syncBoard(boardState) {
-        this.pieces = boardState;
+    onGameStart() {
+        this.gameStarted = true;
+        this.gameStartTime = Date.now();
+        this.startTimer();
+        
+        if (this.myColor === 'black') {
+            this.gameHintEl.textContent = '你执黑，请落子';
+        } else {
+            this.gameHintEl.textContent = '你执白，等待黑棋落子';
+            waitingForOpponent = true;
+        }
+        
+        this.gameStatusDiv.textContent = '🎯 游戏进行中';
+        this.gameStatusDiv.className = 'status-display';
+        this.updateUI();
+    }
+    
+    onGameEnd(data) {
+        this.gameOver = true;
+        this.stopTimer();
+        
+        const winnerName = data.winner_id ? 
+            (data.black_player === currentUser.username ? data.black_player : data.white_player) : '';
+        
+        this.gameStatusDiv.textContent = '🏆 游戏结束';
+        this.gameStatusDiv.className = 'status-display win';
+        this.showWinModal(winnerName);
+    }
+    
+    syncFromServer(data) {
+        this.pieces = JSON.parse(JSON.stringify(data.board_state));
+        this.currentTurn = data.current_turn;
+        
+        // 计算步数
+        const history = JSON.parse(data.move_history || '[]');
+        this.moveCount = history.length;
+        
+        if (data.status === 'finished') {
+            this.gameOver = true;
+            this.stopTimer();
+        }
+        
+        this.updateUI();
         this.drawBoard();
+        
+        if (!this.gameOver) {
+            if (this.myColor === this.currentTurn) {
+                this.gameHintEl.textContent = '轮到你了！';
+                waitingForOpponent = false;
+            } else {
+                this.gameHintEl.textContent = '等待对手落子...';
+                waitingForOpponent = true;
+            }
+        }
     }
     
     bindEvents() {
@@ -282,19 +381,22 @@ class GomokuOnline {
         this.canvas.addEventListener('mouseleave', () => this.drawBoard());
         
         document.getElementById('restart-btn').addEventListener('click', async () => {
-            if (currentRoom) {
+            if (currentRoom && this.gameOver) {
                 try {
                     await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST');
-                    this.reset(currentRoom);
+                    this.reset({ ...currentRoom, status: 'playing' });
+                    this.onGameStart();
                 } catch (err) {}
             }
         });
     }
     
     startTimer() {
-        clearInterval(this.timerInterval);
+        this.stopTimer();
+        if (!this.gameStarted) return;
+        
         this.timerInterval = setInterval(() => {
-            if (!this.gameOver) {
+            if (!this.gameOver && this.gameStartTime) {
                 const elapsed = Math.floor((Date.now() - this.gameStartTime) / 1000);
                 const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
                 const seconds = (elapsed % 60).toString().padStart(2, '0');
@@ -303,17 +405,26 @@ class GomokuOnline {
         }, 1000);
     }
     
+    stopTimer() {
+        if (this.timerInterval) {
+            clearInterval(this.timerInterval);
+            this.timerInterval = null;
+        }
+    }
+    
     updateUI() {
         this.turnIndicator.className = 'turn-display ' + 
-            (this.currentPlayer === 'black' ? 'black-turn' : 'white-turn');
+            (this.currentTurn === 'black' ? 'black-turn' : 'white-turn');
         this.currentPlayerText.textContent = 
-            this.currentPlayer === 'black' ? '黑棋走子' : '白棋走子';
-        
-        this.blackCard.classList.toggle('active-player', this.currentPlayer === 'black');
-        this.whiteCard.classList.toggle('active-player', this.currentPlayer === 'white');
+            this.currentTurn === 'black' ? '黑棋走子' : '白棋走子';
+        this.blackCard.classList.toggle('active-player', this.currentTurn === 'black');
+        this.whiteCard.classList.toggle('active-player', this.currentTurn === 'white');
         this.moveCountSpan.textContent = this.moveCount;
-        this.gameStatusDiv.textContent = '🎯 游戏进行中';
-        this.gameStatusDiv.className = 'status-display';
+        
+        if (!this.gameOver && this.gameStarted) {
+            this.gameStatusDiv.textContent = '🎯 游戏进行中';
+            this.gameStatusDiv.className = 'status-display';
+        }
     }
     
     drawBoard(hoverX = -1, hoverY = -1) {
@@ -338,7 +449,6 @@ class GomokuOnline {
             ctx.moveTo(padding + i * cellSize, padding);
             ctx.lineTo(padding + i * cellSize, padding + (size - 1) * cellSize);
             ctx.stroke();
-            
             ctx.beginPath();
             ctx.moveTo(padding, padding + i * cellSize);
             ctx.lineTo(padding + (size - 1) * cellSize, padding + i * cellSize);
@@ -363,9 +473,9 @@ class GomokuOnline {
             });
         });
         
-        if (!this.gameOver && hoverX >= 0 && hoverX < size && hoverY >= 0 && hoverY < size && !this.pieces[hoverY][hoverX]) {
-            if (this.myColor === this.currentPlayer) {
-                this.drawPiece(hoverX, hoverY, this.currentPlayer, true);
+        if (!this.gameOver && this.gameStarted && this.myColor === this.currentTurn) {
+            if (hoverX >= 0 && hoverX < size && hoverY >= 0 && hoverY < size && !this.pieces[hoverY][hoverX]) {
+                this.drawPiece(hoverX, hoverY, this.currentTurn, true);
             }
         }
     }
@@ -402,8 +512,7 @@ class GomokuOnline {
     }
     
     handleClick(e) {
-        if (this.gameOver) return;
-        if (this.myColor !== this.currentPlayer) return;
+        if (this.gameOver || !this.gameStarted || this.myColor !== this.currentTurn) return;
         
         const rect = this.canvas.getBoundingClientRect();
         const scaleX = this.canvas.width / rect.width;
@@ -422,7 +531,7 @@ class GomokuOnline {
     }
     
     handleHover(e) {
-        if (this.gameOver) return;
+        if (this.gameOver || !this.gameStarted || this.myColor !== this.currentTurn) return;
         
         const rect = this.canvas.getBoundingClientRect();
         const scaleX = this.canvas.width / rect.width;
@@ -445,29 +554,38 @@ class GomokuOnline {
         try {
             const data = await api(`/api/rooms/${this.roomCode}/move`, 'POST', { x, y });
             
-            this.pieces = data.board_state;
+            // 立即更新本地
+            this.pieces = JSON.parse(JSON.stringify(data.board_state));
             this.moveCount++;
             
             if (data.game_over) {
                 this.gameOver = true;
+                this.stopTimer();
                 this.gameStatusDiv.textContent = `🏆 ${data.winner} 获胜！`;
                 this.gameStatusDiv.className = 'status-display win';
-                this.showWin(data.winner);
+                this.gameHintEl.textContent = '游戏结束';
+                this.showWinModal(data.winner);
             } else {
-                this.currentPlayer = data.current_turn;
-                this.updateUI();
+                this.currentTurn = data.current_turn;
+                this.gameHintEl.textContent = '等待对手落子...';
+                waitingForOpponent = true;
             }
             
+            this.updateUI();
             this.drawBoard();
         } catch (err) {
-            // 落子失败
+            // 失败，等下次同步修复
         }
     }
     
-    showWin(winner) {
-        winnerDisplay.textContent = winner === currentUser.username ? '🎉 你赢了！' : `💪 ${winner} 获胜`;
+    showWinModal(winnerName) {
+        winnerDisplay.textContent = winnerName === currentUser.username ? '🎉 你赢了！' : `💪 ${winnerName} 获胜`;
         winDescription.textContent = `经过 ${this.moveCount} 步`;
         winModal.style.display = 'flex';
+    }
+    
+    cleanup() {
+        this.stopTimer();
     }
 }
 
