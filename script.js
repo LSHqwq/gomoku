@@ -618,7 +618,7 @@ class GomokuOnline {
         }
         if (count === 3) {
             if (open === 2) return 6000 * bonus;   // 活三
-            if (open === 1) return 3000 * bonus;   // 眠三
+            if (open === 1) return 3500 * bonus;   // 眠三
         }
         if (count === 2) {
             if (open === 2) return 500 * bonus;    // 活二
