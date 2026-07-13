@@ -610,7 +610,7 @@ class GomokuOnline {
 
     patternScore(count, open, isAI) {
         // 防守价值 = 攻击价值 * 1.5
-        const bonus = isAI ? 1.0 : 1.5;
+        const bonus = isAI ? 1.0 : 1.6;
         
         if (count >= 5) return 100000;
         if (count === 4) {
