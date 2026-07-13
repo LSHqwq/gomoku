@@ -150,19 +150,45 @@ async function syncLoop() {
     if (!currentRoom || !currentRoom.room_code || currentRoom.room_code === 'AI') { syncTimer = setTimeout(syncLoop, 2000); return; }
     try {
         const data = await api(`/api/rooms/${currentRoom.room_code}`);
+        
+        if (data.status === 'finished' && data.winner_id === 'timeout') {
+            stopSync(); alert('房间因长时间无活动已关闭');
+            currentRoom = null; if (game) { game.isAI = false; game.cleanup(); }
+            showLobby(); return;
+        }
+        
         if (data.black_player) blackNameEl.textContent = data.black_player; else blackNameEl.textContent = '等待中';
         if (data.white_player) whiteNameEl.textContent = data.white_player; else whiteNameEl.textContent = '等待中';
-        if (data.status === 'playing' && currentRoom.status === 'waiting') { currentRoom.status = 'playing'; currentRoom.black_player = data.black_player; currentRoom.white_player = data.white_player; game.myColor = 'black'; game.onGameStart(); }
+        
+        if (data.status === 'playing' && currentRoom.status === 'waiting') {
+            currentRoom.status = 'playing';
+            currentRoom.black_player = data.black_player;
+            currentRoom.white_player = data.white_player;
+            game.myColor = 'black'; game.onGameStart();
+        }
+        
         if (game && !game.gameOver) {
-            if (JSON.stringify(data.board_state) !== JSON.stringify(game.pieces)) game.syncFromServer(data);
+            if (JSON.stringify(data.board_state) !== JSON.stringify(game.pieces)) {
+                game.syncFromServer(data);
+            }
             const mhLen = (data.move_history || []).length;
-            if (data.status === 'playing' && mhLen === 0 && game.moveCount > 0) { game.reset(currentRoom); game.onGameStart(); }
+            if (data.status === 'playing' && mhLen === 0 && game.moveCount > 0) {
+                game.reset(currentRoom); game.onGameStart();
+            }
             if (data.status === 'finished') game.onGameEnd(data);
         }
-        if (data.status === 'playing' && game && game.gameOver) { game.reset(currentRoom); game.onGameStart(); }
+        
+        if (data.status === 'playing' && game && game.gameOver) {
+            game.reset(currentRoom); game.onGameStart();
+        }
+        
         currentRoom.status = data.status;
     } catch (err) {
-        if (err.message === '房间不存在') { stopSync(); alert('房间已解散'); currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); return; }
+        if (err.message === '房间不存在') {
+            stopSync(); alert('房间已解散');
+            currentRoom = null; if (game) { game.isAI = false; game.cleanup(); }
+            showLobby(); return;
+        }
     }
     syncTimer = setTimeout(syncLoop, 1000);
 }
@@ -177,7 +203,9 @@ function showGameRoom() {
 }
 
 leaveRoomBtn.addEventListener('click', async () => {
-    if (currentRoom && !game.isAI) { try { await api(`/api/rooms/${currentRoom.room_code}/leave`, 'POST'); } catch (err) {} }
+    if (currentRoom && !game.isAI) {
+        try { await api(`/api/rooms/${currentRoom.room_code}/leave`, 'POST'); } catch (err) {}
+    }
     stopSync(); currentRoom = null;
     if (game) { game.isAI = false; game.cleanup(); }
     showLobby();
@@ -204,6 +232,7 @@ class GomokuOnline {
         this.currentTurn = 'black'; this.gameOver = false; this.moveCount = 0;
         this.gameStarted = false; this.gameStartTime = null; this.timerInterval = null;
         this.myColor = null; this.lastMove = null; this.isAI = false;
+        this.turnSeconds = 300; this.timeoutInterval = null;
         this.canvas = document.getElementById('board');
         this.ctx = this.canvas.getContext('2d');
         this.bindEvents(); this.drawBoard();
@@ -214,6 +243,7 @@ class GomokuOnline {
         this.pieces = Array(15).fill(null).map(() => Array(15).fill(null));
         this.currentTurn = 'black'; this.gameOver = false; this.moveCount = 0;
         this.gameStarted = false; this.gameStartTime = null; this.lastMove = null;
+        this.turnSeconds = 300; this.stopTurnTimer();
         gameTimeEl.textContent = '00:00'; moveCountEl.textContent = '0';
         gameStatusDiv.textContent = ''; gameStatusDiv.className = 'status-display';
         gameHint.textContent = ''; winModal.style.display = 'none';
@@ -228,6 +258,7 @@ class GomokuOnline {
         this.gameStarted = true; this.gameStartTime = Date.now(); this.startTimer();
         gameStatusDiv.textContent = '🎯 游戏进行中'; gameStatusDiv.className = 'status-display';
         gameHint.textContent = this.myColor === 'black' ? '你执黑，请落子' : '你执白，等待黑棋落子';
+        this.startTurnTimer();
     }
 
     onGameEnd(data) {
@@ -251,7 +282,10 @@ class GomokuOnline {
         if (history.length > 0) { const last = history[history.length - 1]; this.lastMove = { x: last.x, y: last.y }; }
         this.updateTurnUI();
         if (data.status === 'finished') { this.gameOver = true; this.stopTimer(); }
-        else gameHint.textContent = this.myColor === this.currentTurn ? '轮到你了！' : '等待对手落子...';
+        else {
+            gameHint.textContent = this.myColor === this.currentTurn ? '轮到你了！' : '等待对手落子...';
+            this.turnSeconds = 300; this.startTurnTimer();
+        }
         this.drawBoard();
     }
 
@@ -278,7 +312,31 @@ class GomokuOnline {
         }, 1000);
     }
 
-    stopTimer() { if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; } }
+    stopTimer() {
+        if (this.timerInterval) { clearInterval(this.timerInterval); this.timerInterval = null; }
+        this.stopTurnTimer();
+    }
+
+    startTurnTimer() {
+        this.stopTurnTimer();
+        this.turnSeconds = 300;
+        this.timeoutInterval = setInterval(() => {
+            if (this.gameOver || !this.gameStarted) return;
+            this.turnSeconds--;
+            if (this.turnSeconds <= 0) {
+                this.stopTurnTimer();
+                if (this.isAI) return;
+                if (this.myColor === this.currentTurn) {
+                    alert('落子超时，你输了！');
+                    this.gameOver = true; this.stopTimer();
+                }
+            }
+        }, 1000);
+    }
+
+    stopTurnTimer() {
+        if (this.timeoutInterval) { clearInterval(this.timeoutInterval); this.timeoutInterval = null; }
+    }
 
     drawBoard(hx = -1, hy = -1) {
         const ctx = this.ctx, pad = this.padding, cell = this.cellSize, size = this.boardSize;
@@ -365,49 +423,72 @@ class GomokuOnline {
                 const wn = data.winner || '';
                 winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '🎉 你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
                 winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
-            } else { this.currentTurn = data.current_turn; gameHint.textContent = '等待对手落子...'; }
+            } else {
+                this.currentTurn = data.current_turn; gameHint.textContent = '等待对手落子...';
+                this.turnSeconds = 300; this.startTurnTimer();
+            }
             this.updateTurnUI(); this.drawBoard();
         } catch (err) {}
     }
 
-        // ========== AI（Minimax + Alpha-Beta）==========
+    // ========== AI（攻击型 Minimax + Alpha-Beta）==========
     aiMove() {
         if (this.gameOver || !this.isAI) return;
-        
-        // 先检查立即能赢/必须堵的
-        const win = this.findWinningMove('white');
+        const win = this.findImmediateWin('white');
         if (win) { this.placeAIMove(win.x, win.y); return; }
-        const block = this.findWinningMove('black');
+        const block = this.findImmediateWin('black');
         if (block) { this.placeAIMove(block.x, block.y); return; }
-        
-        // Minimax 搜索，深度4
+        const killer = this.findKillerMove('white');
+        if (killer) { this.placeAIMove(killer.x, killer.y); return; }
+        const blockKiller = this.findKillerMove('black');
+        if (blockKiller) { this.placeAIMove(blockKiller.x, blockKiller.y); return; }
         const result = this.minimax(4, -Infinity, Infinity, true);
-        if (result.move) {
-            this.placeAIMove(result.move.x, result.move.y);
+        if (result.move) this.placeAIMove(result.move.x, result.move.y);
+    }
+
+    findImmediateWin(player) {
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                if (this.pieces[y][x] !== null) continue;
+                this.pieces[y][x] = player;
+                const won = this.checkLocalWin(x, y, player);
+                this.pieces[y][x] = null;
+                if (won) return { x, y };
+            }
         }
+        return null;
+    }
+
+    findKillerMove(player) {
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                if (this.pieces[y][x] !== null) continue;
+                this.pieces[y][x] = player;
+                let openFours = 0, openThrees = 0;
+                const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+                for (const [dx, dy] of dirs) {
+                    const { count, open } = this.countDirection(x, y, dx, dy, player);
+                    if (count === 4 && open >= 1) openFours++;
+                    if (count === 3 && open === 2) openThrees++;
+                }
+                this.pieces[y][x] = null;
+                if (openFours >= 1 || openThrees >= 2) return { x, y };
+            }
+        }
+        return null;
     }
 
     minimax(depth, alpha, beta, isMaximizing) {
-        // 终止条件
-        if (depth === 0 || this.gameOver) {
-            return { score: this.evaluateBoard() };
-        }
-        
+        if (depth === 0 || this.gameOver) return { score: this.evaluateBoard() };
         const moves = this.getCandidates();
         if (moves.length === 0) return { score: 0 };
-        
-        // 走法排序（提高剪枝效率）
         moves.sort((a, b) => {
             const sa = this.quickEval(a.x, a.y, isMaximizing ? 'white' : 'black');
             const sb = this.quickEval(b.x, b.y, isMaximizing ? 'white' : 'black');
             return sb - sa;
         });
-        
-        // 只取前15个候选走法，减少计算量
-        const topMoves = moves.slice(0, 15);
-        
+        const topMoves = moves.slice(0, 12);
         let bestMove = topMoves[0];
-        
         if (isMaximizing) {
             let maxScore = -Infinity;
             for (const move of topMoves) {
@@ -418,10 +499,7 @@ class GomokuOnline {
                 }
                 const result = this.minimax(depth - 1, alpha, beta, false);
                 this.pieces[move.y][move.x] = null;
-                if (result.score > maxScore) {
-                    maxScore = result.score;
-                    bestMove = move;
-                }
+                if (result.score > maxScore) { maxScore = result.score; bestMove = move; }
                 alpha = Math.max(alpha, maxScore);
                 if (beta <= alpha) break;
             }
@@ -436,10 +514,7 @@ class GomokuOnline {
                 }
                 const result = this.minimax(depth - 1, alpha, beta, true);
                 this.pieces[move.y][move.x] = null;
-                if (result.score < minScore) {
-                    minScore = result.score;
-                    bestMove = move;
-                }
+                if (result.score < minScore) { minScore = result.score; bestMove = move; }
                 beta = Math.min(beta, minScore);
                 if (beta <= alpha) break;
             }
@@ -451,9 +526,18 @@ class GomokuOnline {
         let score = 0;
         const dirs = [[1,0],[0,1],[1,1],[1,-1]];
         for (const [dx, dy] of dirs) {
-            score += this.evalDir(x, y, dx, dy, player);
+            const { count, open } = this.countDirection(x, y, dx, dy, player);
+            score += this.patternScore(count, open, true);
         }
-        score += (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 2;
+        this.pieces[y][x] = player;
+        let threats = 0;
+        for (const [dx, dy] of dirs) {
+            const { count, open } = this.countDirection(x, y, dx, dy, player);
+            if ((count === 3 && open === 2) || (count === 4 && open >= 1)) threats++;
+        }
+        if (threats >= 2) score += 20000;
+        this.pieces[y][x] = null;
+        score += (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 3;
         return score;
     }
 
@@ -461,43 +545,17 @@ class GomokuOnline {
         let score = 0;
         const dirs = [[1,0],[0,1],[1,1],[1,-1]];
         const evaluated = new Set();
-        
         for (let y = 0; y < 15; y++) {
             for (let x = 0; x < 15; x++) {
                 if (this.pieces[y][x] === null) continue;
+                const player = this.pieces[y][x];
                 for (const [dx, dy] of dirs) {
                     const key = `${x},${y},${dx},${dy}`;
                     if (evaluated.has(key)) continue;
-                    
-                    let count = 1, open = 0, player = this.pieces[y][x];
-                    let i = 1;
-                    while (true) {
-                        const nx = x + dx * i, ny = y + dy * i;
-                        if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
-                        if (this.pieces[ny][nx] === player) { count++; i++; }
-                        else { if (this.pieces[ny][nx] === null) open++; break; }
-                    }
-                    i = 1;
-                    while (true) {
-                        const nx = x - dx * i, ny = y - dy * i;
-                        if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
-                        if (this.pieces[ny][nx] === player) { count++; i++; }
-                        else { if (this.pieces[ny][nx] === null) open++; break; }
-                    }
-                    
-                    let s = 0;
-                    if (count >= 5) s = 100000;
-                    else if (count === 4 && open === 2) s = 50000;
-                    else if (count === 4 && open === 1) s = 10000;
-                    else if (count === 3 && open === 2) s = 5000;
-                    else if (count === 3 && open === 1) s = 1000;
-                    else if (count === 2 && open === 2) s = 500;
-                    else if (count === 2 && open === 1) s = 100;
-                    else if (count === 1 && open === 2) s = 50;
-                    
+                    const { count, open } = this.countDirection(x, y, dx, dy, player);
+                    const s = this.patternScore(count, open, player === 'white');
                     if (player === 'white') score += s;
-                    else score -= s * 0.9;
-                    
+                    else score -= s * 0.95;
                     evaluated.add(key);
                 }
             }
@@ -505,16 +563,33 @@ class GomokuOnline {
         return score;
     }
 
-    findWinningMove(player) {
-        for (let y = 0; y < 15; y++) {
-            for (let x = 0; x < 15; x++) {
-                if (this.pieces[y][x] !== null) continue;
-                this.pieces[y][x] = player;
-                if (this.checkLocalWin(x, y, player)) { this.pieces[y][x] = null; return { x, y }; }
-                this.pieces[y][x] = null;
-            }
+    countDirection(x, y, dx, dy, player) {
+        let count = 1, open = 0;
+        let i = 1;
+        while (true) {
+            const nx = x + dx * i, ny = y + dy * i;
+            if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
+            if (this.pieces[ny][nx] === player) { count++; i++; }
+            else { if (this.pieces[ny][nx] === null) open++; break; }
         }
-        return null;
+        i = 1;
+        while (true) {
+            const nx = x - dx * i, ny = y - dy * i;
+            if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
+            if (this.pieces[ny][nx] === player) { count++; i++; }
+            else { if (this.pieces[ny][nx] === null) open++; break; }
+        }
+        return { count, open };
+    }
+
+    patternScore(count, open, isAI) {
+        const bonus = isAI ? 1.1 : 1.0;
+        if (count >= 5) return 100000 * bonus;
+        if (count === 4) return open === 2 ? 50000 * bonus : (open === 1 ? 8000 * bonus : 0);
+        if (count === 3) return open === 2 ? 4000 * bonus : (open === 1 ? 800 * bonus : 0);
+        if (count === 2) return open === 2 ? 400 * bonus : (open === 1 ? 80 * bonus : 0);
+        if (count === 1 && open === 2) return 30 * bonus;
+        return 0;
     }
 
     getCandidates() {
