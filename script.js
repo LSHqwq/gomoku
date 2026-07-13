@@ -370,17 +370,139 @@ class GomokuOnline {
         } catch (err) {}
     }
 
-    // ========== AI ==========
+        // ========== AI（Minimax + Alpha-Beta）==========
     aiMove() {
         if (this.gameOver || !this.isAI) return;
+        
+        // 先检查立即能赢/必须堵的
         const win = this.findWinningMove('white');
         if (win) { this.placeAIMove(win.x, win.y); return; }
         const block = this.findWinningMove('black');
         if (block) { this.placeAIMove(block.x, block.y); return; }
-        const block3 = this.findBlockThree();
-        if (block3) { this.placeAIMove(block3.x, block3.y); return; }
-        const best = this.findBestPosition();
-        if (best) this.placeAIMove(best.x, best.y);
+        
+        // Minimax 搜索，深度4
+        const result = this.minimax(4, -Infinity, Infinity, true);
+        if (result.move) {
+            this.placeAIMove(result.move.x, result.move.y);
+        }
+    }
+
+    minimax(depth, alpha, beta, isMaximizing) {
+        // 终止条件
+        if (depth === 0 || this.gameOver) {
+            return { score: this.evaluateBoard() };
+        }
+        
+        const moves = this.getCandidates();
+        if (moves.length === 0) return { score: 0 };
+        
+        // 走法排序（提高剪枝效率）
+        moves.sort((a, b) => {
+            const sa = this.quickEval(a.x, a.y, isMaximizing ? 'white' : 'black');
+            const sb = this.quickEval(b.x, b.y, isMaximizing ? 'white' : 'black');
+            return sb - sa;
+        });
+        
+        // 只取前15个候选走法，减少计算量
+        const topMoves = moves.slice(0, 15);
+        
+        let bestMove = topMoves[0];
+        
+        if (isMaximizing) {
+            let maxScore = -Infinity;
+            for (const move of topMoves) {
+                this.pieces[move.y][move.x] = 'white';
+                if (this.checkLocalWin(move.x, move.y, 'white')) {
+                    this.pieces[move.y][move.x] = null;
+                    return { score: 100000 + depth, move };
+                }
+                const result = this.minimax(depth - 1, alpha, beta, false);
+                this.pieces[move.y][move.x] = null;
+                if (result.score > maxScore) {
+                    maxScore = result.score;
+                    bestMove = move;
+                }
+                alpha = Math.max(alpha, maxScore);
+                if (beta <= alpha) break;
+            }
+            return { score: maxScore, move: bestMove };
+        } else {
+            let minScore = Infinity;
+            for (const move of topMoves) {
+                this.pieces[move.y][move.x] = 'black';
+                if (this.checkLocalWin(move.x, move.y, 'black')) {
+                    this.pieces[move.y][move.x] = null;
+                    return { score: -100000 - depth, move };
+                }
+                const result = this.minimax(depth - 1, alpha, beta, true);
+                this.pieces[move.y][move.x] = null;
+                if (result.score < minScore) {
+                    minScore = result.score;
+                    bestMove = move;
+                }
+                beta = Math.min(beta, minScore);
+                if (beta <= alpha) break;
+            }
+            return { score: minScore, move: bestMove };
+        }
+    }
+
+    quickEval(x, y, player) {
+        let score = 0;
+        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+        for (const [dx, dy] of dirs) {
+            score += this.evalDir(x, y, dx, dy, player);
+        }
+        score += (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 2;
+        return score;
+    }
+
+    evaluateBoard() {
+        let score = 0;
+        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
+        const evaluated = new Set();
+        
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                if (this.pieces[y][x] === null) continue;
+                for (const [dx, dy] of dirs) {
+                    const key = `${x},${y},${dx},${dy}`;
+                    if (evaluated.has(key)) continue;
+                    
+                    let count = 1, open = 0, player = this.pieces[y][x];
+                    let i = 1;
+                    while (true) {
+                        const nx = x + dx * i, ny = y + dy * i;
+                        if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
+                        if (this.pieces[ny][nx] === player) { count++; i++; }
+                        else { if (this.pieces[ny][nx] === null) open++; break; }
+                    }
+                    i = 1;
+                    while (true) {
+                        const nx = x - dx * i, ny = y - dy * i;
+                        if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
+                        if (this.pieces[ny][nx] === player) { count++; i++; }
+                        else { if (this.pieces[ny][nx] === null) open++; break; }
+                    }
+                    
+                    let s = 0;
+                    if (count >= 5) s = 100000;
+                    else if (count === 4 && open === 2) s = 50000;
+                    else if (count === 4 && open === 1) s = 10000;
+                    else if (count === 3 && open === 2) s = 5000;
+                    else if (count === 3 && open === 1) s = 1000;
+                    else if (count === 2 && open === 2) s = 500;
+                    else if (count === 2 && open === 1) s = 100;
+                    else if (count === 1 && open === 2) s = 50;
+                    
+                    if (player === 'white') score += s;
+                    else score -= s * 0.9;
+                    
+                    evaluated.add(key);
+                }
+            }
+        }
+        return score;
     }
 
     findWinningMove(player) {
@@ -393,63 +515,6 @@ class GomokuOnline {
             }
         }
         return null;
-    }
-
-    findBlockThree() {
-        for (let y = 0; y < 15; y++) {
-            for (let x = 0; x < 15; x++) {
-                if (this.pieces[y][x] !== null) continue;
-                this.pieces[y][x] = 'black';
-                let threats = this.countThreats(x, y, 'black');
-                this.pieces[y][x] = null;
-                if (threats >= 2) return { x, y };
-            }
-        }
-        for (let y = 0; y < 15; y++) {
-            for (let x = 0; x < 15; x++) {
-                if (this.pieces[y][x] !== null) continue;
-                this.pieces[y][x] = 'black';
-                let threats = this.countThreats(x, y, 'black');
-                this.pieces[y][x] = null;
-                if (threats >= 1) return { x, y };
-            }
-        }
-        return null;
-    }
-
-    countThreats(x, y, player) {
-        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
-        let threats = 0;
-        for (const [dx, dy] of dirs) {
-            let count = 1, open = 0, i = 1;
-            while (true) {
-                const nx = x + dx * i, ny = y + dy * i;
-                if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
-                if (this.pieces[ny][nx] === player) { count++; i++; }
-                else { if (this.pieces[ny][nx] === null) open++; break; }
-            }
-            i = 1;
-            while (true) {
-                const nx = x - dx * i, ny = y - dy * i;
-                if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
-                if (this.pieces[ny][nx] === player) { count++; i++; }
-                else { if (this.pieces[ny][nx] === null) open++; break; }
-            }
-            if (count === 4 && open >= 1) threats += 2;
-            if (count === 3 && open === 2) threats += 2;
-            if (count === 3 && open === 1) threats += 1;
-        }
-        return threats;
-    }
-
-    findBestPosition() {
-        let bestScore = -Infinity, bestMove = { x: 7, y: 7 };
-        const candidates = this.getCandidates();
-        for (const { x, y } of candidates) {
-            const score = this.evaluatePoint(x, y);
-            if (score > bestScore) { bestScore = score; bestMove = { x, y }; }
-        }
-        return bestMove;
     }
 
     getCandidates() {
@@ -472,47 +537,6 @@ class GomokuOnline {
         }
         if (candidates.length === 0) candidates.push({ x: 7, y: 7 });
         return candidates;
-    }
-
-    evaluatePoint(x, y) {
-        let score = 0;
-        this.pieces[y][x] = 'white';
-        score += this.getPointScore(x, y, 'white');
-        this.pieces[y][x] = 'black';
-        score += this.getPointScore(x, y, 'black') * 0.9;
-        this.pieces[y][x] = null;
-        score += (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 3;
-        return score;
-    }
-
-    getPointScore(x, y, player) {
-        let score = 0;
-        const dirs = [[1,0],[0,1],[1,1],[1,-1]];
-        for (const [dx, dy] of dirs) score += this.evalDir(x, y, dx, dy, player);
-        return score;
-    }
-
-    evalDir(x, y, dx, dy, player) {
-        let count = 1, open = 0, i = 1;
-        while (true) {
-            const nx = x + dx * i, ny = y + dy * i;
-            if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
-            if (this.pieces[ny][nx] === player) { count++; i++; }
-            else { if (this.pieces[ny][nx] === null) open++; break; }
-        }
-        i = 1;
-        while (true) {
-            const nx = x - dx * i, ny = y - dy * i;
-            if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) break;
-            if (this.pieces[ny][nx] === player) { count++; i++; }
-            else { if (this.pieces[ny][nx] === null) open++; break; }
-        }
-        if (count >= 5) return 100000;
-        if (count === 4) return open === 2 ? 50000 : (open === 1 ? 10000 : 0);
-        if (count === 3) return open === 2 ? 5000 : (open === 1 ? 1000 : 0);
-        if (count === 2) return open === 2 ? 500 : (open === 1 ? 100 : 0);
-        if (count === 1) return open === 2 ? 50 : 0;
-        return 0;
     }
 
     placeAIMove(x, y) {
