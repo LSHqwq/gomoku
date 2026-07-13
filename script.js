@@ -515,77 +515,227 @@ class GomokuOnline {
         } catch (err) {}
     }
     
-    // ========== AI 逻辑 ==========
+        // ========== AI 逻辑（升级版）==========
     aiMove() {
         if (this.gameOver || !this.isAI) return;
         
-        const winMove = this.findBestMove('white');
-        if (winMove) { this.placeAIMove(winMove.x, winMove.y); return; }
-        
-        const blockMove = this.findBestMove('black');
-        if (blockMove) { this.placeAIMove(blockMove.x, blockMove.y); return; }
-        
-        const bestMove = this.findStrategicMove();
-        if (bestMove) { this.placeAIMove(bestMove.x, bestMove.y); }
+        // 用 minimax 搜索，深度4
+        const result = this.minimax(4, -Infinity, Infinity, true);
+        if (result.move) {
+            this.placeAIMove(result.move.x, result.move.y);
+        }
     }
     
-    findBestMove(player) {
+    minimax(depth, alpha, beta, isMaximizing) {
+        // 先检查立即能赢/需要堵的位置
+        if (depth === 4) {
+            const winMove = this.findImmediateMove('white');
+            if (winMove) return { score: 100000, move: winMove };
+            const blockMove = this.findImmediateMove('black');
+            if (blockMove) return { score: 99999, move: blockMove };
+        }
+        
+        if (depth === 0 || this.gameOver) {
+            return { score: this.evaluateBoard() };
+        }
+        
+        const moves = this.getCandidateMoves();
+        if (moves.length === 0) return { score: 0 };
+        
+        // 对候选走法预排序（提高剪枝效率）
+        moves.sort((a, b) => {
+            const sa = this.quickScore(a.x, a.y, isMaximizing ? 'white' : 'black');
+            const sb = this.quickScore(b.x, b.y, isMaximizing ? 'white' : 'black');
+            return sb - sa;
+        });
+        
+        let bestMove = null;
+        
+        if (isMaximizing) {
+            let maxScore = -Infinity;
+            for (const move of moves) {
+                this.pieces[move.y][move.x] = 'white';
+                // 检查是否赢了
+                if (this.checkWinForAI(move.x, move.y, 'white')) {
+                    this.pieces[move.y][move.x] = null;
+                    return { score: 100000 - (4 - depth) * 1000, move };
+                }
+                const result = this.minimax(depth - 1, alpha, beta, false);
+                this.pieces[move.y][move.x] = null;
+                
+                if (result.score > maxScore) {
+                    maxScore = result.score;
+                    bestMove = move;
+                }
+                alpha = Math.max(alpha, maxScore);
+                if (beta <= alpha) break;
+            }
+            return { score: maxScore, move: bestMove };
+        } else {
+            let minScore = Infinity;
+            for (const move of moves) {
+                this.pieces[move.y][move.x] = 'black';
+                if (this.checkWinForAI(move.x, move.y, 'black')) {
+                    this.pieces[move.y][move.x] = null;
+                    return { score: -100000 + (4 - depth) * 1000, move };
+                }
+                const result = this.minimax(depth - 1, alpha, beta, true);
+                this.pieces[move.y][move.x] = null;
+                
+                if (result.score < minScore) {
+                    minScore = result.score;
+                    bestMove = move;
+                }
+                beta = Math.min(beta, minScore);
+                if (beta <= alpha) break;
+            }
+            return { score: minScore, move: bestMove };
+        }
+    }
+    
+    findImmediateMove(player) {
         for (let y = 0; y < 15; y++) {
             for (let x = 0; x < 15; x++) {
                 if (this.pieces[y][x] !== null) continue;
                 this.pieces[y][x] = player;
-                if (this.checkWinForAI(x, y, player)) {
-                    this.pieces[y][x] = null;
-                    return { x, y };
-                }
+                const win = this.checkWinForAI(x, y, player);
                 this.pieces[y][x] = null;
+                if (win) return { x, y };
             }
         }
         return null;
     }
     
-    checkWinForAI(x, y, player) {
-        const directions = [[1,0],[0,1],[1,1],[1,-1]];
-        for (const [dx, dy] of directions) {
-            let count = 1;
-            for (let i=1;i<5;i++){ const nx=x+dx*i,ny=y+dy*i; if(nx>=0&&nx<15&&ny>=0&&ny<15&&this.pieces[ny][nx]===player)count++;else break; }
-            for (let i=1;i<5;i++){ const nx=x-dx*i,ny=y-dy*i; if(nx>=0&&nx<15&&ny>=0&&ny<15&&this.pieces[ny][nx]===player)count++;else break; }
-            if(count>=5)return true;
-        }
-        return false;
-    }
-    
-    findStrategicMove() {
-        let bestScore = -1, bestMove = null;
+    getCandidateMoves() {
+        const candidates = [];
+        const visited = new Set();
+        
+        // 遍历棋盘，找已有棋子周围2格内的空位
         for (let y = 0; y < 15; y++) {
             for (let x = 0; x < 15; x++) {
-                if (this.pieces[y][x] !== null) continue;
-                const score = this.evaluatePosition(x, y);
-                if (score > bestScore) { bestScore = score; bestMove = { x, y }; }
+                if (this.pieces[y][x] === null) continue;
+                
+                for (let dy = -2; dy <= 2; dy++) {
+                    for (let dx = -2; dx <= 2; dx++) {
+                        const nx = x + dx, ny = y + dy;
+                        if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) continue;
+                        if (this.pieces[ny][nx] !== null) continue;
+                        const key = ny * 15 + nx;
+                        if (visited.has(key)) continue;
+                        visited.add(key);
+                        candidates.push({ x: nx, y: ny });
+                    }
+                }
             }
         }
-        return bestMove || { x: 7, y: 7 };
+        
+        // 如果棋盘为空，下天元
+        if (candidates.length === 0) {
+            candidates.push({ x: 7, y: 7 });
+        }
+        
+        return candidates;
     }
     
-    evaluatePosition(x, y) {
+    quickScore(x, y, player) {
         let score = 0;
         const directions = [[1,0],[0,1],[1,1],[1,-1]];
+        
         for (const [dx, dy] of directions) {
-            let whiteCount = 0, blackCount = 0, empty = 0;
-            for (let i = -4; i <= 4; i++) {
-                const nx = x + dx * i, ny = y + dy * i;
-                if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) continue;
-                if (this.pieces[ny][nx] === 'white') whiteCount++;
-                else if (this.pieces[ny][nx] === 'black') blackCount++;
-                else empty++;
-            }
-            if (whiteCount + empty >= 5) score += whiteCount * 10;
-            if (blackCount + empty >= 5) score += blackCount * 8;
+            const pattern = this.getPattern(x, y, dx, dy, player);
+            score += this.patternScore(pattern, player === 'white');
         }
-        const centerDist = Math.abs(x - 7) + Math.abs(y - 7);
-        score += (14 - centerDist);
+        
+        // 靠近中心加分
+        score += (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 2;
+        
         return score;
     }
+    
+    evaluateBoard() {
+        let score = 0;
+        
+        // 评估所有方向
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                if (this.pieces[y][x] === 'white') score += 5;
+                else if (this.pieces[y][x] === 'black') score -= 5;
+            }
+        }
+        
+        // 评估连子模式
+        const directions = [[1,0],[0,1],[1,1],[1,-1]];
+        const evaluated = new Set();
+        
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                for (const [dx, dy] of directions) {
+                    const key = `${x},${y},${dx},${dy}`;
+                    if (evaluated.has(key)) continue;
+                    
+                    const pattern = this.getPattern(x, y, dx, dy, null);
+                    if (pattern.whiteCount + pattern.blackCount > 0) {
+                        score += this.patternScore(pattern, true);
+                        score -= this.patternScore(pattern, false) * 0.9;
+                    }
+                    
+                    // 标记已评估
+                    for (let i = 0; i < 5; i++) {
+                        evaluated.add(`${x + dx * i},${y + dy * i},${dx},${dy}`);
+                    }
+                }
+            }
+        }
+        
+        return score;
+    }
+    
+    getPattern(x, y, dx, dy, player) {
+        let whiteCount = 0, blackCount = 0, empty = 0;
+        
+        for (let i = 0; i < 5; i++) {
+            const nx = x + dx * i, ny = y + dy * i;
+            if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) {
+                return { whiteCount: 0, blackCount: 0, empty: 0, valid: false };
+            }
+            if (this.pieces[ny][nx] === 'white') whiteCount++;
+            else if (this.pieces[ny][nx] === 'black') blackCount++;
+            else empty++;
+        }
+        
+        return { whiteCount, blackCount, empty, valid: true };
+    }
+    
+    patternScore(pattern, isWhite) {
+        if (!pattern.valid) return 0;
+        
+        const myCount = isWhite ? pattern.whiteCount : pattern.blackCount;
+        const oppCount = isWhite ? pattern.blackCount : pattern.whiteCount;
+        const empty = pattern.empty;
+        
+        // 对方有子，这个方向不能形成五连
+        if (oppCount > 0 && myCount > 0) return 0;
+        
+        // 全是空格，没价值
+        if (empty === 5) return 0;
+        
+        const count = Math.max(myCount, oppCount);
+        const isMine = myCount > 0;
+        const sign = isMine ? 1 : -1;
+        
+        if (count === 4 && empty === 1) return sign * 10000;  // 活四/冲四
+        if (count === 3 && empty === 2) return sign * 1000;   // 活三
+        if (count === 2 && empty === 3) return sign * 100;    // 活二
+        if (count === 1 && empty === 4) return sign * 10;     // 活一
+        if (count === 5) return sign * 100000;                 // 五连
+        
+        return 0;
+    }
+    
+    // 删除旧的方法
+    findBestMove(player) { return this.findImmediateMove(player); }
+    findStrategicMove() { return this.getCandidateMoves()[0] || { x: 7, y: 7 }; }
+    evaluatePosition(x, y) { return this.quickScore(x, y, 'white'); }
     
     placeAIMove(x, y) {
         this.pieces[y][x] = 'white';
