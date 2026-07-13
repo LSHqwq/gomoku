@@ -780,8 +780,7 @@ class GomokuOnline {
     }
     
     cleanup() { this.stopTimer(); }
-    
-    cleanup() { this.stopTimer(); }
+
 }
 
 window.addEventListener('DOMContentLoaded', () => {
