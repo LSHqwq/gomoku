@@ -25,7 +25,7 @@
     </div>
 
     <!-- 大厅界面 -->
-    <div id="lobby" class="container">
+    <div id="lobby" class="container" style="display: none;">
         <div class="lobby-panel">
             <div class="game-logo">
                 <h1>五子棋</h1>
@@ -45,18 +45,20 @@
                 </div>
                 <button id="refresh-rooms-btn" class="game-btn undo-btn" style="width:100%;margin-top:8px;">🔄 刷新列表</button>
             </div>
+
             <div class="lobby-actions">
+                <button id="ai-play-btn" class="game-btn restart-btn" style="background: linear-gradient(135deg, #48bb78, #38a169);">🤖 人机对战</button>
                 <button id="create-room-btn" class="game-btn restart-btn">创建房间</button>
                 <div class="join-room-area">
                     <input id="join-room-input" type="text" placeholder="输入房间号" class="auth-input" maxlength="6">
-                    <button id="join-room-btn" class="game-btn undo-btn">加入房间</button>
+                    <button id="join-room-btn" class="game-btn undo-btn">加入</button>
                 </div>
                 <p id="lobby-error" class="auth-error"></p>
             </div>
         </div>
     </div>
 
-    <!-- 游戏界面（隐藏） -->
+    <!-- 游戏界面 -->
     <div id="game-room" class="container" style="display: none;">
         <div class="left-panel">
             <div class="game-logo">

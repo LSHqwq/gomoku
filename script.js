@@ -40,6 +40,7 @@ const blackCard = document.getElementById('black-player-card');
 const whiteCard = document.getElementById('white-player-card');
 const refreshRoomsBtn = document.getElementById('refresh-rooms-btn');
 const roomList = document.getElementById('room-list');
+const aiPlayBtn = document.getElementById('ai-play-btn');
 
 async function api(path, method = 'GET', body = null) {
     const options = { method, headers: { 'Content-Type': 'application/json' } };
@@ -124,6 +125,15 @@ async function quickJoin(code) {
 }
 
 refreshRoomsBtn.addEventListener('click', loadRoomList);
+
+// 人机对战
+aiPlayBtn.addEventListener('click', () => {
+    currentRoom = { room_code: 'AI', status: 'playing', black_player: currentUser.username, white_player: '电脑' };
+    showGameRoom();
+    game.myColor = 'black';
+    game.isAI = true;
+    game.onGameStart();
+});
 
 createRoomBtn.addEventListener('click', async () => {
     try {
@@ -228,6 +238,11 @@ leaveRoomBtn.addEventListener('click', async () => {
 
 restartBtn.addEventListener('click', async () => {
     if (!currentRoom || game.gameStarted === false) return;
+    if (game.isAI) {
+        game.reset(currentRoom);
+        game.onGameStart();
+        return;
+    }
     try {
         await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST');
         game.reset(currentRoom);
@@ -238,6 +253,11 @@ restartBtn.addEventListener('click', async () => {
 modalRestartBtn.addEventListener('click', async () => {
     winModal.style.display = 'none';
     if (!currentRoom) return;
+    if (game.isAI) {
+        game.reset(currentRoom);
+        game.onGameStart();
+        return;
+    }
     try {
         await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST');
         game.reset(currentRoom);
@@ -253,7 +273,8 @@ class GomokuOnline {
         this.currentTurn = 'black'; this.gameOver = false; this.moveCount = 0;
         this.gameStarted = false; this.gameStartTime = null; this.timerInterval = null;
         this.myColor = null;
-        this.lastMove = null; // 最后落子位置，用于红点
+        this.lastMove = null;
+        this.isAI = false;
         this.canvas = document.getElementById('board');
         this.ctx = this.canvas.getContext('2d');
         this.bindEvents(); this.drawBoard();
@@ -265,6 +286,7 @@ class GomokuOnline {
         this.currentTurn = 'black'; this.gameOver = false; this.moveCount = 0;
         this.gameStarted = false; this.gameStartTime = null;
         this.lastMove = null;
+        this.isAI = false;
         gameTimeEl.textContent = '00:00'; moveCountEl.textContent = '0';
         gameStatusDiv.textContent = ''; gameStatusDiv.className = 'status-display';
         gameHint.textContent = ''; winModal.style.display = 'none';
@@ -313,12 +335,12 @@ class GomokuOnline {
     }
     
     syncFromServer(data) {
+        if (this.isAI) return;
         this.pieces = JSON.parse(JSON.stringify(data.board_state));
         this.currentTurn = data.current_turn;
         this.moveCount = (data.move_history || []).length;
         moveCountEl.textContent = this.moveCount;
         
-        // 获取最后落子位置
         const history = data.move_history || [];
         if (history.length > 0) {
             const last = history[history.length - 1];
@@ -427,6 +449,34 @@ class GomokuOnline {
     }
     
     async makeMove(x, y) {
+        if (this.isAI) {
+            // 人机模式
+            this.pieces[y][x] = 'black';
+            this.moveCount++;
+            this.lastMove = { x, y };
+            moveCountEl.textContent = this.moveCount;
+            
+            if (this.checkWinForAI(x, y, 'black')) {
+                this.gameOver = true; this.stopTimer();
+                gameStatusDiv.textContent = '🏆 游戏结束';
+                gameStatusDiv.className = 'status-display win';
+                gameHint.textContent = '游戏结束';
+                winnerDisplay.textContent = '🎉 你赢了！';
+                winDescription.textContent = '经过 ' + this.moveCount + ' 步';
+                winModal.style.display = 'flex';
+            } else {
+                this.currentTurn = 'white';
+                gameHint.textContent = '电脑思考中...';
+                this.updateTurnUI();
+                this.drawBoard();
+                setTimeout(() => this.aiMove(), 300);
+            }
+            this.updateTurnUI();
+            this.drawBoard();
+            return;
+        }
+        
+        // 在线模式
         try {
             const data = await api(`/api/rooms/${currentRoom.room_code}/move`, 'POST', { x, y });
             this.pieces = JSON.parse(JSON.stringify(data.board_state));
@@ -455,6 +505,101 @@ class GomokuOnline {
             }
             this.updateTurnUI(); this.drawBoard();
         } catch (err) {}
+    }
+    
+    // ========== AI 逻辑 ==========
+    aiMove() {
+        if (this.gameOver || !this.isAI) return;
+        
+        const winMove = this.findBestMove('white');
+        if (winMove) { this.placeAIMove(winMove.x, winMove.y); return; }
+        
+        const blockMove = this.findBestMove('black');
+        if (blockMove) { this.placeAIMove(blockMove.x, blockMove.y); return; }
+        
+        const bestMove = this.findStrategicMove();
+        if (bestMove) { this.placeAIMove(bestMove.x, bestMove.y); }
+    }
+    
+    findBestMove(player) {
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                if (this.pieces[y][x] !== null) continue;
+                this.pieces[y][x] = player;
+                if (this.checkWinForAI(x, y, player)) {
+                    this.pieces[y][x] = null;
+                    return { x, y };
+                }
+                this.pieces[y][x] = null;
+            }
+        }
+        return null;
+    }
+    
+    checkWinForAI(x, y, player) {
+        const directions = [[1,0],[0,1],[1,1],[1,-1]];
+        for (const [dx, dy] of directions) {
+            let count = 1;
+            for (let i=1;i<5;i++){ const nx=x+dx*i,ny=y+dy*i; if(nx>=0&&nx<15&&ny>=0&&ny<15&&this.pieces[ny][nx]===player)count++;else break; }
+            for (let i=1;i<5;i++){ const nx=x-dx*i,ny=y-dy*i; if(nx>=0&&nx<15&&ny>=0&&ny<15&&this.pieces[ny][nx]===player)count++;else break; }
+            if(count>=5)return true;
+        }
+        return false;
+    }
+    
+    findStrategicMove() {
+        let bestScore = -1, bestMove = null;
+        for (let y = 0; y < 15; y++) {
+            for (let x = 0; x < 15; x++) {
+                if (this.pieces[y][x] !== null) continue;
+                const score = this.evaluatePosition(x, y);
+                if (score > bestScore) { bestScore = score; bestMove = { x, y }; }
+            }
+        }
+        return bestMove || { x: 7, y: 7 };
+    }
+    
+    evaluatePosition(x, y) {
+        let score = 0;
+        const directions = [[1,0],[0,1],[1,1],[1,-1]];
+        for (const [dx, dy] of directions) {
+            let whiteCount = 0, blackCount = 0, empty = 0;
+            for (let i = -4; i <= 4; i++) {
+                const nx = x + dx * i, ny = y + dy * i;
+                if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) continue;
+                if (this.pieces[ny][nx] === 'white') whiteCount++;
+                else if (this.pieces[ny][nx] === 'black') blackCount++;
+                else empty++;
+            }
+            if (whiteCount + empty >= 5) score += whiteCount * 10;
+            if (blackCount + empty >= 5) score += blackCount * 8;
+        }
+        const centerDist = Math.abs(x - 7) + Math.abs(y - 7);
+        score += (14 - centerDist);
+        return score;
+    }
+    
+    placeAIMove(x, y) {
+        this.pieces[y][x] = 'white';
+        this.moveCount++;
+        this.lastMove = { x, y };
+        moveCountEl.textContent = this.moveCount;
+        
+        if (this.checkWinForAI(x, y, 'white')) {
+            this.gameOver = true;
+            this.stopTimer();
+            gameStatusDiv.textContent = '🏆 游戏结束';
+            gameStatusDiv.className = 'status-display win';
+            gameHint.textContent = '游戏结束';
+            winnerDisplay.textContent = '💪 电脑获胜';
+            winDescription.textContent = '经过 ' + this.moveCount + ' 步';
+            winModal.style.display = 'flex';
+        } else {
+            this.currentTurn = 'black';
+            gameHint.textContent = '轮到你了！';
+        }
+        this.updateTurnUI();
+        this.drawBoard();
     }
     
     cleanup() { this.stopTimer(); }
