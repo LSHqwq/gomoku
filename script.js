@@ -38,6 +38,8 @@ const turnIndicator = document.getElementById('turn-indicator');
 const currentPlayerText = document.getElementById('current-player-text');
 const blackCard = document.getElementById('black-player-card');
 const whiteCard = document.getElementById('white-player-card');
+const refreshRoomsBtn = document.getElementById('refresh-rooms-btn');
+const roomList = document.getElementById('room-list');
 
 async function api(path, method = 'GET', body = null) {
     const options = { method, headers: { 'Content-Type': 'application/json' } };
@@ -80,7 +82,48 @@ logoutBtn.addEventListener('click', () => {
 
 // ========== 大厅 ==========
 function showAuthModal() { authModal.style.display = 'flex'; lobby.style.display = 'none'; gameRoomEl.style.display = 'none'; }
-function showLobby() { authModal.style.display = 'none'; lobby.style.display = 'flex'; gameRoomEl.style.display = 'none'; displayUsername.textContent = '👤 ' + currentUser.username; logoutBtn.style.display = 'block'; lobbyError.textContent = ''; joinRoomInput.value = ''; }
+function showLobby() {
+    authModal.style.display = 'none'; lobby.style.display = 'flex'; gameRoomEl.style.display = 'none';
+    displayUsername.textContent = '👤 ' + currentUser.username; logoutBtn.style.display = 'block';
+    lobbyError.textContent = ''; joinRoomInput.value = '';
+    loadRoomList();
+}
+
+async function loadRoomList() {
+    try {
+        const rooms = await api('/api/rooms');
+        if (rooms.length === 0) {
+            roomList.innerHTML = '<p class="room-empty">暂无可用房间</p>';
+            return;
+        }
+        roomList.innerHTML = rooms.map(room => `
+            <div class="room-item" onclick="quickJoin('${room.room_code}')">
+                <div class="room-item-info">
+                    <span class="room-item-code">${room.room_code}</span>
+                    <span class="room-item-host">👤 ${room.host_name}</span>
+                </div>
+                <span class="room-item-join">加入 →</span>
+            </div>
+        `).join('');
+    } catch (err) {
+        roomList.innerHTML = '<p class="room-empty">加载失败</p>';
+    }
+}
+
+async function quickJoin(code) {
+    joinRoomInput.value = code;
+    try {
+        const data = await api(`/api/rooms/${code}/join`, 'POST');
+        currentRoom = { room_code: data.room_code, status: 'playing', black_player: data.black_player, white_player: data.white_player };
+        showGameRoom();
+        game.myColor = 'white'; game.onGameStart(); startSync();
+    } catch (err) {
+        lobbyError.textContent = err.message;
+        loadRoomList();
+    }
+}
+
+refreshRoomsBtn.addEventListener('click', loadRoomList);
 
 createRoomBtn.addEventListener('click', async () => {
     try {
@@ -210,6 +253,7 @@ class GomokuOnline {
         this.currentTurn = 'black'; this.gameOver = false; this.moveCount = 0;
         this.gameStarted = false; this.gameStartTime = null; this.timerInterval = null;
         this.myColor = null;
+        this.lastMove = null; // 最后落子位置，用于红点
         this.canvas = document.getElementById('board');
         this.ctx = this.canvas.getContext('2d');
         this.bindEvents(); this.drawBoard();
@@ -220,6 +264,7 @@ class GomokuOnline {
         this.pieces = Array(15).fill(null).map(() => Array(15).fill(null));
         this.currentTurn = 'black'; this.gameOver = false; this.moveCount = 0;
         this.gameStarted = false; this.gameStartTime = null;
+        this.lastMove = null;
         gameTimeEl.textContent = '00:00'; moveCountEl.textContent = '0';
         gameStatusDiv.textContent = ''; gameStatusDiv.className = 'status-display';
         gameHint.textContent = ''; winModal.style.display = 'none';
@@ -272,6 +317,14 @@ class GomokuOnline {
         this.currentTurn = data.current_turn;
         this.moveCount = (data.move_history || []).length;
         moveCountEl.textContent = this.moveCount;
+        
+        // 获取最后落子位置
+        const history = data.move_history || [];
+        if (history.length > 0) {
+            const last = history[history.length - 1];
+            this.lastMove = { x: last.x, y: last.y };
+        }
+        
         this.updateTurnUI();
         if (data.status === 'finished') {
             this.gameOver = true;
@@ -324,6 +377,20 @@ class GomokuOnline {
             ctx.beginPath(); ctx.arc(pad + x * cell, pad + y * cell, 4, 0, Math.PI*2); ctx.fillStyle = '#3a2a0a'; ctx.fill();
         });
         this.pieces.forEach((row, y) => row.forEach((p, x) => { if (p) this.drawPiece(x, y, p, false); }));
+        
+        // 最后落子红点
+        if (this.lastMove) {
+            const lx = pad + this.lastMove.x * cell;
+            const ly = pad + this.lastMove.y * cell;
+            ctx.beginPath();
+            ctx.arc(lx, ly, 5, 0, Math.PI * 2);
+            ctx.fillStyle = '#e53e3e';
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+        }
+        
         if (!this.gameOver && this.gameStarted && this.myColor === this.currentTurn && hx >= 0 && hx < size && hy >= 0 && hy < size && !this.pieces[hy][hx]) {
             this.drawPiece(hx, hy, this.currentTurn, true);
         }
@@ -364,6 +431,7 @@ class GomokuOnline {
             const data = await api(`/api/rooms/${currentRoom.room_code}/move`, 'POST', { x, y });
             this.pieces = JSON.parse(JSON.stringify(data.board_state));
             this.moveCount = (data.move_history || []).length;
+            this.lastMove = { x, y };
             moveCountEl.textContent = this.moveCount;
             if (data.game_over) {
                 this.gameOver = true; this.stopTimer();
