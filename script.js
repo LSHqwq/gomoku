@@ -1,5 +1,5 @@
 // ========== 配置 ==========
-const API_BASE = 'https://wuziqi.lshserver.dpdns.org';
+const API_BASE = 'http://lshserver.dpdns.org:3000';
 let authToken = localStorage.getItem('token') || '';
 let currentUser = null;
 let currentRoom = null;
@@ -142,27 +142,12 @@ joinRoomBtn.addEventListener('click', async () => {
 
 // ========== 同步 ==========
 let syncTimer = null, syncRunning = false;
-let needFastPoll = false; // 是否快速轮询
-
-function startSync() { 
-    stopSync(); 
-    syncRunning = true; 
-    needFastPoll = false;
-    syncLoop(); 
-}
-
-function stopSync() { 
-    syncRunning = false; 
-    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } 
-}
+function startSync() { stopSync(); syncRunning = true; syncLoop(); }
+function stopSync() { syncRunning = false; if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } }
 
 async function syncLoop() {
     if (!syncRunning) return;
-    if (!currentRoom || !currentRoom.room_code || currentRoom.room_code === 'AI') { 
-        syncTimer = setTimeout(syncLoop, 2000); 
-        return; 
-    }
-    
+    if (!currentRoom || !currentRoom.room_code || currentRoom.room_code === 'AI') { syncTimer = setTimeout(syncLoop, 2000); return; }
     try {
         const data = await api(`/api/rooms/${currentRoom.room_code}`);
         
@@ -172,28 +157,20 @@ async function syncLoop() {
             showLobby(); return;
         }
         
-        if (data.black_player) blackNameEl.textContent = data.black_player; 
-        else blackNameEl.textContent = '等待中';
-        if (data.white_player) whiteNameEl.textContent = data.white_player; 
-        else whiteNameEl.textContent = '等待中';
+        if (data.black_player) blackNameEl.textContent = data.black_player; else blackNameEl.textContent = '等待中';
+        if (data.white_player) whiteNameEl.textContent = data.white_player; else whiteNameEl.textContent = '等待中';
         
         if (data.status === 'playing' && currentRoom.status === 'waiting') {
             currentRoom.status = 'playing';
             currentRoom.black_player = data.black_player;
             currentRoom.white_player = data.white_player;
-            game.myColor = 'black'; 
-            game.onGameStart();
+            game.myColor = 'black'; game.onGameStart();
         }
         
         if (game && !game.gameOver) {
-            const serverBoard = JSON.stringify(data.board_state);
-            const localBoard = JSON.stringify(game.pieces);
-            
-            if (serverBoard !== localBoard) {
+            if (JSON.stringify(data.board_state) !== JSON.stringify(game.pieces)) {
                 game.syncFromServer(data);
-                needFastPoll = false; // 棋盘已同步，恢复正常轮询
             }
-            
             const mhLen = (data.move_history || []).length;
             if (data.status === 'playing' && mhLen === 0 && game.moveCount > 0) {
                 game.reset(currentRoom); game.onGameStart();
@@ -213,10 +190,7 @@ async function syncLoop() {
             showLobby(); return;
         }
     }
-    
-    // 动态轮询间隔
-    const interval = needFastPoll ? 500 : 2000;
-    syncTimer = setTimeout(syncLoop, interval);
+    syncTimer = setTimeout(syncLoop, 1000);
 }
 
 // ========== 游戏界面 ==========
@@ -437,52 +411,27 @@ class GomokuOnline {
             }
             this.updateTurnUI(); this.drawBoard(); return;
         }
-        // ========== 在线模式 - 乐观更新 ==========
-        const originalTurn = this.currentTurn;
-        const originalMoveCount = this.moveCount;
-        
-        // 1. 先本地显示棋子（不等待服务器）
-        this.pieces[y][x] = this.currentTurn;
-        this.moveCount++;
-        this.lastMove = { x, y };
-        moveCountEl.textContent = this.moveCount;
-        this.currentTurn = this.currentTurn === 'black' ? 'white' : 'black';
-        gameHint.textContent = '等待对手落子...';
-        this.updateTurnUI();
-        this.drawBoard();
         try {
             const data = await api(`/api/rooms/${currentRoom.room_code}/move`, 'POST', { x, y });
             this.pieces = JSON.parse(JSON.stringify(data.board_state));
-            this.moveCount = (data.move_history || []).length;
-            this.lastMove = { x, y };
+            this.moveCount = (data.move_history || []).length; this.lastMove = { x, y };
             moveCountEl.textContent = this.moveCount;
-            
             if (data.game_over) {
                 this.gameOver = true; this.stopTimer();
-                gameStatusDiv.textContent = '🏆 游戏结束';
-                gameStatusDiv.className = 'status-display win';
+                gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束';
                 const wn = data.winner || '';
                 winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '🎉 你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
-                winDescription.textContent = '经过 ' + this.moveCount + ' 步';
-                winModal.style.display = 'flex';
+                winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
             } else {
-                this.currentTurn = data.current_turn;
+                this.currentTurn = data.current_turn; gameHint.textContent = '等待对手落子...';
                 this.turnSeconds = 300; this.startTurnTimer();
             }
             this.updateTurnUI(); this.drawBoard();
-        } catch (err) {
-            // 失败，回滚
-            this.pieces[y][x] = null;
-            this.moveCount = originalMoveCount;
-            this.currentTurn = originalTurn;
-            moveCountEl.textContent = this.moveCount;
-            this.updateTurnUI();
-            this.drawBoard();
-        }
+        } catch (err) {}
     }
 
-    // ========== AI（攻击型 Minimax + Alpha-Beta）==========
+    // ========== AI ==========
     aiMove() {
         if (this.gameOver || !this.isAI) return;
         const win = this.findImmediateWin('white');
@@ -577,68 +526,50 @@ class GomokuOnline {
         let score = 0;
         const dirs = [[1,0],[0,1],[1,1],[1,-1]];
         const opponent = player === 'white' ? 'black' : 'white';
-        
-        // 评估自己
         this.pieces[y][x] = player;
-        let selfFours = 0, selfThrees = 0, selfSleepThrees = 0;
+        let selfFours = 0, selfThrees = 0;
         for (const [dx, dy] of dirs) {
             const { count, open } = this.countDirection(x, y, dx, dy, player);
             score += this.patternScore(count, open, player === 'white');
             if (count === 4 && open >= 1) selfFours++;
             if (count === 3 && open === 2) selfThrees++;
-            if (count === 3 && open === 1) selfSleepThrees++;
         }
         if (selfFours >= 1 || selfThrees >= 2) score += 50000;
-        if (selfSleepThrees >= 2) score += 20000;
-        
-        // 评估对手
         this.pieces[y][x] = opponent;
-        let oppFours = 0, oppThrees = 0, oppSleepThrees = 0;
+        let oppFours = 0, oppThrees = 0;
         for (const [dx, dy] of dirs) {
             const { count, open } = this.countDirection(x, y, dx, dy, opponent);
             if (count === 4 && open >= 1) oppFours++;
             if (count === 3 && open === 2) oppThrees++;
-            if (count === 3 && open === 1) oppSleepThrees++;
         }
         if (oppFours >= 1 || oppThrees >= 2) score += 30000;
-        if (oppSleepThrees >= 2) score += 15000;  // 堵双眠三
-        
         this.pieces[y][x] = null;
         score += (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 2;
         return score;
     }
-    
+
     evaluateBoard() {
         let score = 0;
         const dirs = [[1,0],[0,1],[1,1],[1,-1]];
         const evaluated = new Set();
-        
         for (let y = 0; y < 15; y++) {
             for (let x = 0; x < 15; x++) {
                 if (this.pieces[y][x] === null) continue;
                 const player = this.pieces[y][x];
-                
                 for (const [dx, dy] of dirs) {
                     const key = `${x},${y},${dx},${dy}`;
                     if (evaluated.has(key)) continue;
-                    
                     const { count, open } = this.countDirection(x, y, dx, dy, player);
                     const s = this.patternScore(count, open, player === 'white');
-                    
-                    // 白方(AI)加分，黑方(玩家)减分，玩家威胁权重更高
-                    if (player === 'white') {
-                        score += s;
-                    } else {
-                        score -= s; // patternScore 已经给了防守方更高权重
-                    }
-                    
+                    if (player === 'white') score += s;
+                    else score -= s * 0.95;
                     evaluated.add(key);
                 }
             }
         }
         return score;
     }
-        
+
     countDirection(x, y, dx, dy, player) {
         let count = 1, open = 0;
         let i = 1;
@@ -659,23 +590,21 @@ class GomokuOnline {
     }
 
     patternScore(count, open, isAI) {
-        // 防守价值 = 攻击价值 * 1.6
-        const bonus = isAI ? 1.0 : 1.6;
-        
+        const bonus = isAI ? 1.0 : 1.5;
         if (count >= 5) return 100000;
         if (count === 4) {
-            if (open === 2) return 50000 * bonus;  // 活四
-            if (open === 1) return 12000 * bonus;  // 冲四
+            if (open === 2) return 50000 * bonus;
+            if (open === 1) return 12000 * bonus;
         }
         if (count === 3) {
-            if (open === 2) return 6000 * bonus;   // 活三
-            if (open === 1) return 3500 * bonus;   // 眠三
+            if (open === 2) return 6000 * bonus;
+            if (open === 1) return 3000 * bonus;
         }
         if (count === 2) {
-            if (open === 2) return 500 * bonus;    // 活二
-            if (open === 1) return 100 * bonus;    // 眠二
+            if (open === 2) return 600 * bonus;
+            if (open === 1) return 200 * bonus;
         }
-        if (count === 1 && open === 2) return 50 * bonus;
+        if (count === 1 && open === 2) return 60 * bonus;
         return 0;
     }
 
