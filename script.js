@@ -1,5 +1,6 @@
 // ========== 配置 ==========
 const API_BASE = 'http://lshserver.dpdns.org:3000';
+const POLL_INTERVAL = 500;
 let authToken = localStorage.getItem('token') || '';
 let currentUser = null;
 let currentRoom = null;
@@ -190,7 +191,7 @@ async function syncLoop() {
             showLobby(); return;
         }
     }
-    syncTimer = setTimeout(syncLoop, 1000);
+    syncTimer = setTimeout(syncLoop, POLL_INTERVAL);
 }
 
 // ========== 游戏界面 ==========
