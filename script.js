@@ -142,12 +142,27 @@ joinRoomBtn.addEventListener('click', async () => {
 
 // ========== 同步 ==========
 let syncTimer = null, syncRunning = false;
-function startSync() { stopSync(); syncRunning = true; syncLoop(); }
-function stopSync() { syncRunning = false; if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } }
+let needFastPoll = false; // 是否快速轮询
+
+function startSync() { 
+    stopSync(); 
+    syncRunning = true; 
+    needFastPoll = false;
+    syncLoop(); 
+}
+
+function stopSync() { 
+    syncRunning = false; 
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } 
+}
 
 async function syncLoop() {
     if (!syncRunning) return;
-    if (!currentRoom || !currentRoom.room_code || currentRoom.room_code === 'AI') { syncTimer = setTimeout(syncLoop, 2000); return; }
+    if (!currentRoom || !currentRoom.room_code || currentRoom.room_code === 'AI') { 
+        syncTimer = setTimeout(syncLoop, 2000); 
+        return; 
+    }
+    
     try {
         const data = await api(`/api/rooms/${currentRoom.room_code}`);
         
@@ -157,20 +172,28 @@ async function syncLoop() {
             showLobby(); return;
         }
         
-        if (data.black_player) blackNameEl.textContent = data.black_player; else blackNameEl.textContent = '等待中';
-        if (data.white_player) whiteNameEl.textContent = data.white_player; else whiteNameEl.textContent = '等待中';
+        if (data.black_player) blackNameEl.textContent = data.black_player; 
+        else blackNameEl.textContent = '等待中';
+        if (data.white_player) whiteNameEl.textContent = data.white_player; 
+        else whiteNameEl.textContent = '等待中';
         
         if (data.status === 'playing' && currentRoom.status === 'waiting') {
             currentRoom.status = 'playing';
             currentRoom.black_player = data.black_player;
             currentRoom.white_player = data.white_player;
-            game.myColor = 'black'; game.onGameStart();
+            game.myColor = 'black'; 
+            game.onGameStart();
         }
         
         if (game && !game.gameOver) {
-            if (JSON.stringify(data.board_state) !== JSON.stringify(game.pieces)) {
+            const serverBoard = JSON.stringify(data.board_state);
+            const localBoard = JSON.stringify(game.pieces);
+            
+            if (serverBoard !== localBoard) {
                 game.syncFromServer(data);
+                needFastPoll = false; // 棋盘已同步，恢复正常轮询
             }
+            
             const mhLen = (data.move_history || []).length;
             if (data.status === 'playing' && mhLen === 0 && game.moveCount > 0) {
                 game.reset(currentRoom); game.onGameStart();
@@ -190,7 +213,10 @@ async function syncLoop() {
             showLobby(); return;
         }
     }
-    syncTimer = setTimeout(syncLoop, 1000);
+    
+    // 动态轮询间隔
+    const interval = needFastPoll ? 500 : 2000;
+    syncTimer = setTimeout(syncLoop, interval);
 }
 
 // ========== 游戏界面 ==========
@@ -414,7 +440,8 @@ class GomokuOnline {
         try {
             const data = await api(`/api/rooms/${currentRoom.room_code}/move`, 'POST', { x, y });
             this.pieces = JSON.parse(JSON.stringify(data.board_state));
-            this.moveCount = (data.move_history || []).length; this.lastMove = { x, y };
+            this.moveCount = (data.move_history || []).length;
+            this.lastMove = { x, y };
             moveCountEl.textContent = this.moveCount;
             if (data.game_over) {
                 this.gameOver = true; this.stopTimer();
@@ -424,7 +451,9 @@ class GomokuOnline {
                 winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '🎉 你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
                 winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
             } else {
-                this.currentTurn = data.current_turn; gameHint.textContent = '等待对手落子...';
+                this.currentTurn = data.current_turn;
+                gameHint.textContent = '等待对手落子...';
+                needFastPoll = true; // 对方可能马上落子，加快轮询
                 this.turnSeconds = 300; this.startTurnTimer();
             }
             this.updateTurnUI(); this.drawBoard();
