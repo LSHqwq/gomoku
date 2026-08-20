@@ -1,5 +1,5 @@
 // ========== 配置 ==========
-const API_BASE = 'https://gomoku-backend-production.up.railway.app';
+const API_BASE = 'https://wuziqi.lshserver.dpdns.org';
 let authToken = localStorage.getItem('token') || '';
 let currentUser = null;
 let currentRoom = null;
