@@ -437,27 +437,49 @@ class GomokuOnline {
             }
             this.updateTurnUI(); this.drawBoard(); return;
         }
+        // ========== 在线模式 - 乐观更新 ==========
+        const originalTurn = this.currentTurn;
+        const originalMoveCount = this.moveCount;
+        
+        // 1. 先本地显示棋子（不等待服务器）
+        this.pieces[y][x] = this.currentTurn;
+        this.moveCount++;
+        this.lastMove = { x, y };
+        moveCountEl.textContent = this.moveCount;
+        this.currentTurn = this.currentTurn === 'black' ? 'white' : 'black';
+        gameHint.textContent = '等待对手落子...';
+        this.updateTurnUI();
+        this.drawBoard();
         try {
             const data = await api(`/api/rooms/${currentRoom.room_code}/move`, 'POST', { x, y });
             this.pieces = JSON.parse(JSON.stringify(data.board_state));
             this.moveCount = (data.move_history || []).length;
             this.lastMove = { x, y };
             moveCountEl.textContent = this.moveCount;
+            
             if (data.game_over) {
                 this.gameOver = true; this.stopTimer();
-                gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
+                gameStatusDiv.textContent = '🏆 游戏结束';
+                gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束';
                 const wn = data.winner || '';
                 winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '🎉 你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
-                winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
+                winDescription.textContent = '经过 ' + this.moveCount + ' 步';
+                winModal.style.display = 'flex';
             } else {
                 this.currentTurn = data.current_turn;
-                gameHint.textContent = '等待对手落子...';
-                needFastPoll = true; // 对方可能马上落子，加快轮询
                 this.turnSeconds = 300; this.startTurnTimer();
             }
             this.updateTurnUI(); this.drawBoard();
-        } catch (err) {}
+        } catch (err) {
+            // 失败，回滚
+            this.pieces[y][x] = null;
+            this.moveCount = originalMoveCount;
+            this.currentTurn = originalTurn;
+            moveCountEl.textContent = this.moveCount;
+            this.updateTurnUI();
+            this.drawBoard();
+        }
     }
 
     // ========== AI（攻击型 Minimax + Alpha-Beta）==========
