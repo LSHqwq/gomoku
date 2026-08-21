@@ -1,5 +1,5 @@
 // ========== 配置 ==========
-const API_BASE = 'http://lshserver.dpdns.org:3000';
+const API_BASE = 'http://wuziqi.lshserver.dpdns.org';
 const POLL_INTERVAL = 500;
 let authToken = localStorage.getItem('token') || '';
 let currentUser = null;
