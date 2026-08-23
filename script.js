@@ -397,7 +397,7 @@ class GomokuOnline {
     }
 
     async makeMove(x, y) {
-        if (this.isAI) {
+                if (this.isAI) {
             this.pieces[y][x] = 'black'; this.moveCount++; this.lastMove = { x, y };
             moveCountEl.textContent = this.moveCount;
             if (this.checkLocalWin(x, y, 'black')) {
@@ -405,6 +405,12 @@ class GomokuOnline {
                 gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '🎉 你赢了！';
                 winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
+            } else if (this.moveCount >= 225) {
+                // 棋盘满了，平局
+                this.gameOver = true; this.stopTimer();
+                gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
+                gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '🤝 平局！';
+                winDescription.textContent = '棋盘已满'; winModal.style.display = 'flex';
             } else {
                 this.currentTurn = 'white'; gameHint.textContent = '电脑思考中...';
                 this.updateTurnUI(); this.drawBoard();
@@ -421,9 +427,15 @@ class GomokuOnline {
                 this.gameOver = true; this.stopTimer();
                 gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束';
-                const wn = data.winner || '';
-                winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '🎉 你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
-                winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
+                if (data.draw) {
+                    winnerDisplay.textContent = '🤝 平局！';
+                    winDescription.textContent = '棋盘已满';
+                } else {
+                    const wn = data.winner || '';
+                    winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '🎉 你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
+                    winDescription.textContent = '经过 ' + this.moveCount + ' 步';
+                }
+                winModal.style.display = 'flex';
             } else {
                 this.currentTurn = data.current_turn; gameHint.textContent = '等待对手落子...';
                 this.turnSeconds = 300; this.startTurnTimer();
