@@ -617,7 +617,8 @@ class GomokuOnline {
                 for (let dy = -2; dy <= 2; dy++) {
                     for (let dx = -2; dx <= 2; dx++) {
                         const nx = x + dx, ny = y + dy;
-                        if (nx < 0 || nx >= 15 || ny < 0 || ny >= 15) continue;
+                        // 严格检查边界
+                        if (nx < 0 || nx > 14 || ny < 0 || ny > 14) continue;
                         if (this.pieces[ny][nx] !== null) continue;
                         const key = ny * 15 + nx;
                         if (visited.has(key)) continue;
@@ -632,6 +633,8 @@ class GomokuOnline {
     }
 
     placeAIMove(x, y) {
+        if (x < 0 || x > 14 || y < 0 || y > 14) return;
+        if (this.pieces[y][x] !== null) return;
         this.pieces[y][x] = 'white'; this.moveCount++; this.lastMove = { x, y };
         moveCountEl.textContent = this.moveCount;
         if (this.checkLocalWin(x, y, 'white')) {
