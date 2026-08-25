@@ -121,6 +121,7 @@ aiPlayBtn.addEventListener('click', () => {
     currentRoom = { room_code: 'AI', status: 'playing', black_player: currentUser.username, white_player: '电脑' };
     showGameRoom();
     game.isAI = true; game.myColor = 'black'; game.onGameStart();
+    drawBtn.style.display = 'none'; // 隐藏求和按钮
 });
 
 createRoomBtn.addEventListener('click', async () => {
@@ -227,6 +228,8 @@ function showGameRoom() {
     blackNameEl.textContent = currentRoom.black_player || '等待中'; whiteNameEl.textContent = currentRoom.white_player || '等待中';
     if (!game) game = new GomokuOnline();
     game.reset(currentRoom);
+    // 人机模式隐藏求和按钮，在线模式显示
+    drawBtn.style.display = currentRoom.room_code === 'AI' ? 'none' : 'flex';
 }
 
 leaveRoomBtn.addEventListener('click', async () => {
