@@ -42,6 +42,7 @@ const whiteCard = document.getElementById('white-player-card');
 const refreshRoomsBtn = document.getElementById('refresh-rooms-btn');
 const roomList = document.getElementById('room-list');
 const aiPlayBtn = document.getElementById('ai-play-btn');
+const drawBtn = document.getElementById('draw-btn');
 
 async function api(path, method = 'GET', body = null) {
     const options = { method, headers: { 'Content-Type': 'application/json' } };
@@ -158,6 +159,21 @@ async function syncLoop() {
             showLobby(); return;
         }
         
+        if (data.draw_offer_from && data.draw_offer_from !== currentUser.id && !game.gameOver) {
+            const offerName = data.black_player === currentUser.username ? data.white_player : data.black_player;
+            const accept = confirm(`🤝 ${offerName} 请求和棋，是否同意？`);
+            try {
+                await api(`/api/rooms/${currentRoom.room_code}/draw_respond`, 'POST', { accept });
+                if (accept) {
+                    stopSync();
+                    alert('和棋！');
+                    currentRoom = null;
+                    if (game) { game.isAI = false; game.cleanup(); }
+                    showLobby();
+                    return;
+                }
+            } catch (err) {}
+        }
         if (data.black_player) blackNameEl.textContent = data.black_player; else blackNameEl.textContent = '等待中';
         if (data.white_player) whiteNameEl.textContent = data.white_player; else whiteNameEl.textContent = '等待中';
         
@@ -176,7 +192,17 @@ async function syncLoop() {
             if (data.status === 'playing' && mhLen === 0 && game.moveCount > 0) {
                 game.reset(currentRoom); game.onGameStart();
             }
-            if (data.status === 'finished') game.onGameEnd(data);
+            if (data.status === 'finished') {
+                if (data.winner_id === 'draw_agree') {
+                    stopSync();
+                    alert('🤝 和棋！');
+                    currentRoom = null;
+                    if (game) { game.isAI = false; game.cleanup(); }
+                    showLobby();
+                    return;
+                }
+                game.onGameEnd(data);
+            }
         }
         
         if (data.status === 'playing' && game && game.gameOver) {
@@ -216,6 +242,17 @@ restartBtn.addEventListener('click', async () => {
     if (!currentRoom || game.gameStarted === false) return;
     if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
     try { await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); game.reset(currentRoom); game.onGameStart(); } catch (err) {}
+});
+
+drawBtn.addEventListener('click', async () => {
+    if (!currentRoom || game.isAI || game.gameOver) return;
+    if (!confirm('确定要向对方求和吗？')) return;
+    try {
+        await api(`/api/rooms/${currentRoom.room_code}/draw_offer`, 'POST');
+        alert('已发送求和请求，等待对方回应...');
+    } catch (err) {
+        alert(err.message);
+    }
 });
 
 modalRestartBtn.addEventListener('click', async () => {
