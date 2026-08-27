@@ -218,6 +218,12 @@ async function syncLoop() {
             game.myColor = 'black'; game.onGameStart();
         }
         
+                // 对方重新开始了（放在最前面）
+        if (data.status === 'playing' && game && game.gameOver) {
+            game.reset(currentRoom);
+            game.onGameStart();
+        }
+        
         if (game && !game.gameOver) {
             if (JSON.stringify(data.board_state) !== JSON.stringify(game.pieces)) {
                 game.syncFromServer(data);
@@ -241,10 +247,6 @@ async function syncLoop() {
                     game.onGameEnd(data);
                 }
             }
-        }
-        
-        if (data.status === 'playing' && game && game.gameOver) {
-            game.reset(currentRoom); game.onGameStart();
         }
         
         currentRoom.status = data.status;
