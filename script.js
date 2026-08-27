@@ -220,8 +220,10 @@ async function syncLoop() {
         
                 // 对方重新开始了（放在最前面）
         if (data.status === 'playing' && game && game.gameOver) {
+            winModal.style.display = 'none';
             game.reset(currentRoom);
             game.onGameStart();
+            game.drawBoard(); // 强制重绘，清除红点
         }
         
         if (game && !game.gameOver) {
@@ -318,16 +320,29 @@ leaveRoomBtn.addEventListener('click', async () => {
 });
 
 restartBtn.addEventListener('click', async () => {
-    if (!currentRoom || game.gameStarted === false) return;
+    if (!currentRoom) return;
     if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
-    try { await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); game.reset(currentRoom); game.onGameStart(); } catch (err) {}
+    try { 
+        await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); 
+        // 等后端完全更新
+        setTimeout(() => {
+            game.reset(currentRoom); 
+            game.onGameStart();
+        }, 300);
+    } catch (err) {}
 });
 
 modalRestartBtn.addEventListener('click', async () => {
     winModal.style.display = 'none';
     if (!currentRoom) return;
     if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
-    try { await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); game.reset(currentRoom); game.onGameStart(); } catch (err) {}
+    try { 
+        await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); 
+        setTimeout(() => {
+            game.reset(currentRoom); 
+            game.onGameStart();
+        }, 300);
+    } catch (err) {}
 });
 
 // 求和按钮
