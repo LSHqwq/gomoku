@@ -6,6 +6,46 @@ let currentUser = null;
 let currentRoom = null;
 let game = null;
 
+// ========== 页内弹窗函数 ==========
+function showModal(options) {
+    const { title, message, buttons = [{ text: '确定', onClick: () => {} }], autoClose = 0 } = options;
+    
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);display:flex;justify-content:center;align-items:center;z-index:2000;';
+    
+    const dialog = document.createElement('div');
+    dialog.style.cssText = 'background:#16213e;border-radius:16px;padding:30px;text-align:center;min-width:300px;max-width:90%;border:1px solid rgba(255,255,255,0.1);';
+    dialog.innerHTML = `
+        ${title ? `<h3 style="color:#e2e8f0;margin-bottom:8px;font-size:18px;">${title}</h3>` : ''}
+        <p style="color:#a0aec0;font-size:14px;margin-bottom:20px;line-height:1.5;">${message}</p>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;"></div>
+    `;
+    
+    const btnContainer = dialog.querySelector('div');
+    buttons.forEach(btn => {
+        const button = document.createElement('button');
+        button.textContent = btn.text;
+        button.style.cssText = `padding:10px 20px;border:none;border-radius:8px;background:${btn.bg || '#667eea'};color:white;cursor:pointer;font-size:14px;font-weight:500;`;
+        button.addEventListener('click', () => {
+            overlay.remove();
+            if (btn.onClick) btn.onClick();
+        });
+        btnContainer.appendChild(button);
+    });
+    
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    
+    if (autoClose > 0) {
+        setTimeout(() => overlay.remove(), autoClose);
+    }
+}
+
+function showToast(message) {
+    showModal({ message, autoClose: 2000 });
+}
+
+// ========== DOM 元素 ==========
 const authModal = document.getElementById('auth-modal');
 const lobby = document.getElementById('lobby');
 const gameRoomEl = document.getElementById('game-room');
@@ -28,6 +68,7 @@ const whiteNameEl = document.getElementById('white-name');
 const gameHint = document.getElementById('game-hint');
 const leaveRoomBtn = document.getElementById('leave-room-btn');
 const restartBtn = document.getElementById('restart-btn');
+const drawBtn = document.getElementById('draw-btn');
 const winModal = document.getElementById('win-modal');
 const winnerDisplay = document.getElementById('winner-display');
 const winDescription = document.getElementById('win-description');
@@ -42,7 +83,6 @@ const whiteCard = document.getElementById('white-player-card');
 const refreshRoomsBtn = document.getElementById('refresh-rooms-btn');
 const roomList = document.getElementById('room-list');
 const aiPlayBtn = document.getElementById('ai-play-btn');
-const drawBtn = document.getElementById('draw-btn');
 
 async function api(path, method = 'GET', body = null) {
     const options = { method, headers: { 'Content-Type': 'application/json' } };
@@ -121,7 +161,6 @@ aiPlayBtn.addEventListener('click', () => {
     currentRoom = { room_code: 'AI', status: 'playing', black_player: currentUser.username, white_player: '电脑' };
     showGameRoom();
     game.isAI = true; game.myColor = 'black'; game.onGameStart();
-    drawBtn.style.display = 'none'; // 隐藏求和按钮
 });
 
 createRoomBtn.addEventListener('click', async () => {
@@ -145,6 +184,8 @@ joinRoomBtn.addEventListener('click', async () => {
 
 // ========== 同步 ==========
 let syncTimer = null, syncRunning = false;
+let drawOfferActive = false;
+
 function startSync() { stopSync(); syncRunning = true; syncLoop(); }
 function stopSync() { syncRunning = false; if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } }
 
@@ -155,26 +196,17 @@ async function syncLoop() {
         const data = await api(`/api/rooms/${currentRoom.room_code}`);
         
         if (data.status === 'finished' && data.winner_id === 'timeout') {
-            stopSync(); alert('房间因长时间无活动已关闭');
-            currentRoom = null; if (game) { game.isAI = false; game.cleanup(); }
-            showLobby(); return;
+            stopSync();
+            showModal({ title: '⏰ 超时', message: '房间因长时间无活动已关闭', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
+            return;
         }
         
+        // 检测求和请求
         if (data.draw_offer_from && data.draw_offer_from !== currentUser.id && !game.gameOver) {
             const offerName = data.black_player === currentUser.username ? data.white_player : data.black_player;
-            const accept = confirm(`🤝 ${offerName} 请求和棋，是否同意？`);
-            try {
-                await api(`/api/rooms/${currentRoom.room_code}/draw_respond`, 'POST', { accept });
-                if (accept) {
-                    stopSync();
-                    alert('和棋！');
-                    currentRoom = null;
-                    if (game) { game.isAI = false; game.cleanup(); }
-                    showLobby();
-                    return;
-                }
-            } catch (err) {}
+            showDrawOffer(offerName, currentRoom.room_code);
         }
+        
         if (data.black_player) blackNameEl.textContent = data.black_player; else blackNameEl.textContent = '等待中';
         if (data.white_player) whiteNameEl.textContent = data.white_player; else whiteNameEl.textContent = '等待中';
         
@@ -196,10 +228,7 @@ async function syncLoop() {
             if (data.status === 'finished') {
                 if (data.winner_id === 'draw_agree') {
                     stopSync();
-                    alert('🤝 和棋！');
-                    currentRoom = null;
-                    if (game) { game.isAI = false; game.cleanup(); }
-                    showLobby();
+                    showModal({ title: '🤝 和棋', message: '双方同意和棋', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
                     return;
                 }
                 game.onGameEnd(data);
@@ -213,12 +242,42 @@ async function syncLoop() {
         currentRoom.status = data.status;
     } catch (err) {
         if (err.message === '房间不存在') {
-            stopSync(); alert('房间已解散');
-            currentRoom = null; if (game) { game.isAI = false; game.cleanup(); }
-            showLobby(); return;
+            stopSync();
+            showModal({ title: '💔 房间已解散', message: '对方离开了房间', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
+            return;
         }
     }
     syncTimer = setTimeout(syncLoop, POLL_INTERVAL);
+}
+
+// 求和弹窗
+function showDrawOffer(offerName, roomCode) {
+    if (drawOfferActive) return;
+    drawOfferActive = true;
+    
+    showModal({
+        title: '🤝 求和请求',
+        message: `${offerName} 请求和棋，是否同意？`,
+        buttons: [
+            { text: '同意', bg: '#48bb78', onClick: async () => {
+                drawOfferActive = false;
+                try {
+                    await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: true });
+                    stopSync();
+                    currentRoom = null;
+                    if (game) { game.isAI = false; game.cleanup(); }
+                    showLobby();
+                } catch (err) {}
+            }},
+            { text: '拒绝', bg: '#f56565', onClick: async () => {
+                drawOfferActive = false;
+                try {
+                    await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: false });
+                } catch (err) {}
+            }}
+        ],
+        autoClose: 30000
+    });
 }
 
 // ========== 游戏界面 ==========
@@ -228,8 +287,7 @@ function showGameRoom() {
     blackNameEl.textContent = currentRoom.black_player || '等待中'; whiteNameEl.textContent = currentRoom.white_player || '等待中';
     if (!game) game = new GomokuOnline();
     game.reset(currentRoom);
-    // 人机模式隐藏求和按钮，在线模式显示
-    drawBtn.style.display = currentRoom.room_code === 'AI' ? 'none' : 'flex';
+    if (drawBtn) drawBtn.style.display = currentRoom.room_code === 'AI' ? 'none' : 'flex';
 }
 
 leaveRoomBtn.addEventListener('click', async () => {
@@ -247,22 +305,22 @@ restartBtn.addEventListener('click', async () => {
     try { await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); game.reset(currentRoom); game.onGameStart(); } catch (err) {}
 });
 
-drawBtn.addEventListener('click', async () => {
-    if (!currentRoom || game.isAI || game.gameOver) return;
-    if (!confirm('确定要向对方求和吗？')) return;
-    try {
-        await api(`/api/rooms/${currentRoom.room_code}/draw_offer`, 'POST');
-        alert('已发送求和请求，等待对方回应...');
-    } catch (err) {
-        alert(err.message);
-    }
-});
-
 modalRestartBtn.addEventListener('click', async () => {
     winModal.style.display = 'none';
     if (!currentRoom) return;
     if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
     try { await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); game.reset(currentRoom); game.onGameStart(); } catch (err) {}
+});
+
+// 求和按钮
+drawBtn.addEventListener('click', async () => {
+    if (!currentRoom || game.isAI || game.gameOver) return;
+    try {
+        await api(`/api/rooms/${currentRoom.room_code}/draw_offer`, 'POST');
+        gameHint.textContent = '已发送求和请求，等待对方回应...';
+    } catch (err) {
+        showToast(err.message);
+    }
 });
 
 // ========== 游戏类 ==========
@@ -368,7 +426,7 @@ class GomokuOnline {
                 this.stopTurnTimer();
                 if (this.isAI) return;
                 if (this.myColor === this.currentTurn) {
-                    alert('落子超时，你输了！');
+                    showToast('落子超时，你输了！');
                     this.gameOver = true; this.stopTimer();
                 }
             }
@@ -437,7 +495,7 @@ class GomokuOnline {
     }
 
     async makeMove(x, y) {
-                if (this.isAI) {
+        if (this.isAI) {
             this.pieces[y][x] = 'black'; this.moveCount++; this.lastMove = { x, y };
             moveCountEl.textContent = this.moveCount;
             if (this.checkLocalWin(x, y, 'black')) {
@@ -446,7 +504,6 @@ class GomokuOnline {
                 gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '🎉 你赢了！';
                 winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
             } else if (this.moveCount >= 225) {
-                // 棋盘满了，平局
                 this.gameOver = true; this.stopTimer();
                 gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '🤝 平局！';
@@ -481,7 +538,9 @@ class GomokuOnline {
                 this.turnSeconds = 300; this.startTurnTimer();
             }
             this.updateTurnUI(); this.drawBoard();
-        } catch (err) {}
+        } catch (err) {
+            showToast(err.message);
+        }
     }
 
     // ========== AI ==========
@@ -669,7 +728,6 @@ class GomokuOnline {
                 for (let dy = -2; dy <= 2; dy++) {
                     for (let dx = -2; dx <= 2; dx++) {
                         const nx = x + dx, ny = y + dy;
-                        // 严格检查边界
                         if (nx < 0 || nx > 14 || ny < 0 || ny > 14) continue;
                         if (this.pieces[ny][nx] !== null) continue;
                         const key = ny * 15 + nx;
