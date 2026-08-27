@@ -228,8 +228,17 @@ async function syncLoop() {
             }
             if (data.status === 'finished') {
                 if (data.winner_id === 'draw_agree') {
-                    stopSync();
-                    showModal({ title: '和棋', message: '双方同意和棋', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
+                    if (!game.gameOver) {
+                        game.gameOver = true;
+                        game.stopTimer();
+                        gameStatusDiv.textContent = '游戏结束';
+                        gameStatusDiv.className = 'status-display win';
+                        gameHint.textContent = '游戏结束';
+                        winnerDisplay.textContent = '平局！';
+                        winDescription.textContent = '双方同意和棋';
+                        winModal.style.display = 'flex';
+                        game.drawBoard();
+                    }
                     return;
                 }
                 game.onGameEnd(data);
@@ -264,10 +273,18 @@ function showDrawOffer(offerName, roomCode) {
                 drawOfferActive = false;
                 try {
                     await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: true });
-                    stopSync();
-                    currentRoom = null;
-                    if (game) { game.isAI = false; game.cleanup(); }
-                    showLobby();
+                    // 原地显示平局弹窗
+                    if (game) {
+                        game.gameOver = true;
+                        game.stopTimer();
+                        gameStatusDiv.textContent = '游戏结束';
+                        gameStatusDiv.className = 'status-display win';
+                        gameHint.textContent = '游戏结束';
+                        winnerDisplay.textContent = '平局！';
+                        winDescription.textContent = '双方同意和棋';
+                        winModal.style.display = 'flex';
+                        game.drawBoard();
+                    }
                 } catch (err) {}
             }},
             { text: '拒绝', bg: '#f56565', onClick: async () => {
