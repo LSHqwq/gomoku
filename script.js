@@ -226,22 +226,20 @@ async function syncLoop() {
             if (data.status === 'playing' && mhLen === 0 && game.moveCount > 0) {
                 game.reset(currentRoom); game.onGameStart();
             }
-            if (data.status === 'finished') {
+            if (data.status === 'finished' && !game.gameOver) {
                 if (data.winner_id === 'draw_agree') {
-                    if (!game.gameOver) {
-                        game.gameOver = true;
-                        game.stopTimer();
-                        gameStatusDiv.textContent = '游戏结束';
-                        gameStatusDiv.className = 'status-display win';
-                        gameHint.textContent = '游戏结束';
-                        winnerDisplay.textContent = '平局！';
-                        winDescription.textContent = '双方同意和棋';
-                        winModal.style.display = 'flex';
-                        game.drawBoard();
-                    }
-                    return;
+                    game.gameOver = true;
+                    game.stopTimer();
+                    gameStatusDiv.textContent = '游戏结束';
+                    gameStatusDiv.className = 'status-display win';
+                    gameHint.textContent = '游戏结束';
+                    winnerDisplay.textContent = '平局！';
+                    winDescription.textContent = '双方同意和棋';
+                    winModal.style.display = 'flex';
+                    game.drawBoard();
+                } else {
+                    game.onGameEnd(data);
                 }
-                game.onGameEnd(data);
             }
         }
         
