@@ -218,23 +218,22 @@ async function syncLoop() {
             game.myColor = 'black'; game.onGameStart();
         }
         
-                // 对方重新开始了（放在最前面）
-        if (data.status === 'playing' && game && game.gameOver) {
-            winModal.style.display = 'none';
-            game.reset(currentRoom);
-            game.onGameStart();
-            game.drawBoard(); // 强制重绘，清除红点
+        // 检测重启：后端状态是 playing 但本地 gameOver 或棋盘全空且本地有棋子
+        const mhLen = (data.move_history || []).length;
+        if (data.status === 'playing' && game) {
+            if (game.gameOver || (mhLen === 0 && game.moveCount > 0)) {
+                winModal.style.display = 'none';
+                game.reset(currentRoom);
+                game.onGameStart();
+            }
         }
         
+        // 正常同步
         if (game && !game.gameOver) {
             if (JSON.stringify(data.board_state) !== JSON.stringify(game.pieces)) {
                 game.syncFromServer(data);
             }
-            const mhLen = (data.move_history || []).length;
-            if (data.status === 'playing' && mhLen === 0 && game.moveCount > 0) {
-                game.reset(currentRoom); game.onGameStart();
-            }
-            if (data.status === 'finished' && !game.gameOver) {
+            if (data.status === 'finished') {
                 if (data.winner_id === 'draw_agree') {
                     game.gameOver = true;
                     game.stopTimer();
@@ -324,12 +323,9 @@ restartBtn.addEventListener('click', async () => {
     if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
     try { 
         await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); 
-        // 等后端完全更新
-        setTimeout(() => {
-            game.reset(currentRoom); 
-            game.onGameStart();
-        }, 300);
-    } catch (err) {}
+    } catch (err) {
+        showToast('重启失败，请重试');
+    }
 });
 
 modalRestartBtn.addEventListener('click', async () => {
@@ -338,11 +334,9 @@ modalRestartBtn.addEventListener('click', async () => {
     if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
     try { 
         await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); 
-        setTimeout(() => {
-            game.reset(currentRoom); 
-            game.onGameStart();
-        }, 300);
-    } catch (err) {}
+    } catch (err) {
+        showToast('重启失败，请重试');
+    }
 });
 
 // 求和按钮
