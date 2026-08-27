@@ -655,7 +655,7 @@ class GomokuOnline {
             if (count === 4 && open >= 1) oppFours++;
             if (count === 3 && open === 2) oppThrees++;
         }
-        if (oppFours >= 1 || oppThrees >= 2) score += 30000;
+        if (oppFours >= 1 || oppThrees >= 2) score += 45000;
         this.pieces[y][x] = null;
         score += (14 - Math.abs(x - 7) - Math.abs(y - 7)) * 2;
         return score;
@@ -703,7 +703,7 @@ class GomokuOnline {
     }
 
     patternScore(count, open, isAI) {
-        const bonus = isAI ? 1.0 : 1.6;
+        const bonus = isAI ? 1.0 : 1.7;
         if (count >= 5) return 100000;
         if (count === 4) {
             if (open === 2) return 50000 * bonus;
