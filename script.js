@@ -703,7 +703,7 @@ class GomokuOnline {
     }
 
     patternScore(count, open, isAI) {
-        const bonus = isAI ? 1.0 : 1.5;
+        const bonus = isAI ? 1.0 : 1.6;
         if (count >= 5) return 100000;
         if (count === 4) {
             if (open === 2) return 50000 * bonus;
