@@ -191,6 +191,7 @@ function startSync() { stopSync(); syncRunning = true; syncLoop(); }
 function stopSync() { syncRunning = false; if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; } }
 
 async function syncLoop() {
+    let drawModalShown = false; // 全局锁，防止重复弹窗
     if (!syncRunning) return;
     if (!currentRoom || !currentRoom.room_code || currentRoom.room_code === 'AI') { syncTimer = setTimeout(syncLoop, 2000); return; }
     try {
@@ -202,15 +203,16 @@ async function syncLoop() {
             return;
         }
         
-        // 检测求和请求（drawOfferActive 防止重复弹窗）
-        if (data.draw_offer_from && data.draw_offer_from !== currentUser.id && !game.gameOver && !drawOfferActive) {
+        // 检测求和请求
+        if (data.draw_offer_from && data.draw_offer_from !== currentUser.id && !game.gameOver && !drawModalShown) {
+            drawModalShown = true; // 立即锁住，下一次轮询就不会再进
             const offerName = data.black_player === currentUser.username ? data.white_player : data.black_player;
             showDrawOffer(offerName, currentRoom.room_code);
-            drawOfferActive = true;
         }
         
-        // 如果对方撤销了求和请求，重置标志
+        // 请求消失时解锁
         if (!data.draw_offer_from) {
+            drawModalShown = false;
             drawOfferActive = false;
         }
         
@@ -278,6 +280,7 @@ function showDrawOffer(offerName, roomCode) {
         buttons: [
             { text: '同意', bg: '#48bb78', onClick: async () => {
                 drawOfferActive = false;
+                drawModalShown = false; // 解锁
                 try {
                     await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: true });
                     // 原地显示平局弹窗
@@ -296,6 +299,7 @@ function showDrawOffer(offerName, roomCode) {
             }},
             { text: '拒绝', bg: '#f56565', onClick: async () => {
                 drawOfferActive = false;
+                drawModalShown = false; // 解锁
                 try {
                     await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: false });
                 } catch (err) {}
