@@ -202,10 +202,16 @@ async function syncLoop() {
             return;
         }
         
-        // 检测求和请求
-        if (data.draw_offer_from && data.draw_offer_from !== currentUser.id && !game.gameOver) {
+        // 检测求和请求（drawOfferActive 防止重复弹窗）
+        if (data.draw_offer_from && data.draw_offer_from !== currentUser.id && !game.gameOver && !drawOfferActive) {
             const offerName = data.black_player === currentUser.username ? data.white_player : data.black_player;
             showDrawOffer(offerName, currentRoom.room_code);
+            drawOfferActive = true;
+        }
+        
+        // 如果对方撤销了求和请求，重置标志
+        if (!data.draw_offer_from) {
+            drawOfferActive = false;
         }
         
         if (data.black_player) blackNameEl.textContent = data.black_player; else blackNameEl.textContent = '等待中';
