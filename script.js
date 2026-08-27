@@ -318,16 +318,34 @@ leaveRoomBtn.addEventListener('click', async () => {
 });
 
 restartBtn.addEventListener('click', async () => {
-    if (!currentRoom || game.gameStarted === false) return;
-    if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
-    try { await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); game.reset(currentRoom); game.onGameStart(); } catch (err) {}
+    if (!currentRoom) return;
+    if (game.isAI) { 
+        game.reset(currentRoom); 
+        game.onGameStart(); 
+        return; 
+    }
+    try { 
+        await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); 
+    } catch (err) {}
+    // 无论后端是否成功，本地立即重开
+    game.reset(currentRoom);
+    game.onGameStart();
 });
 
 modalRestartBtn.addEventListener('click', async () => {
     winModal.style.display = 'none';
     if (!currentRoom) return;
-    if (game.isAI) { game.reset(currentRoom); game.onGameStart(); return; }
-    try { await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); game.reset(currentRoom); game.onGameStart(); } catch (err) {}
+    if (game.isAI) { 
+        game.reset(currentRoom); 
+        game.onGameStart(); 
+        return; 
+    }
+    try { 
+        await api(`/api/rooms/${currentRoom.room_code}/restart`, 'POST'); 
+    } catch (err) {}
+    // 无论后端是否成功，本地立即重开
+    game.reset(currentRoom);
+    game.onGameStart();
 });
 
 // 求和按钮
