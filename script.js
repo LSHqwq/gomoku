@@ -127,7 +127,8 @@ logoutBtn.addEventListener('click', () => {
 function showAuthModal() { authModal.style.display = 'flex'; lobby.style.display = 'none'; gameRoomEl.style.display = 'none'; }
 function showLobby() {
     authModal.style.display = 'none'; lobby.style.display = 'flex'; gameRoomEl.style.display = 'none';
-    displayUsername.textContent = '👤 ' + currentUser.username; logoutBtn.style.display = 'block';
+    displayUsername.textContent = currentUser.username;
+    logoutBtn.style.display = 'block';
     lobbyError.textContent = ''; joinRoomInput.value = '';
     if (game) { game.isAI = false; game.cleanup(); }
     loadRoomList();
@@ -197,7 +198,7 @@ async function syncLoop() {
         
         if (data.status === 'finished' && data.winner_id === 'timeout') {
             stopSync();
-            showModal({ title: '⏰ 超时', message: '房间因长时间无活动已关闭', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
+            showModal({ title: '超时', message: '房间因长时间无活动已关闭', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
             return;
         }
         
@@ -228,7 +229,7 @@ async function syncLoop() {
             if (data.status === 'finished') {
                 if (data.winner_id === 'draw_agree') {
                     stopSync();
-                    showModal({ title: '🤝 和棋', message: '双方同意和棋', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
+                    showModal({ title: '和棋', message: '双方同意和棋', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
                     return;
                 }
                 game.onGameEnd(data);
@@ -243,7 +244,7 @@ async function syncLoop() {
     } catch (err) {
         if (err.message === '房间不存在') {
             stopSync();
-            showModal({ title: '💔 房间已解散', message: '对方离开了房间', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
+            showModal({ title: '房间已解散', message: '对方离开了房间', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
             return;
         }
     }
@@ -256,7 +257,7 @@ function showDrawOffer(offerName, roomCode) {
     drawOfferActive = true;
     
     showModal({
-        title: '🤝 求和请求',
+        title: '求和请求',
         message: `${offerName} 请求和棋，是否同意？`,
         buttons: [
             { text: '同意', bg: '#48bb78', onClick: async () => {
@@ -283,7 +284,7 @@ function showDrawOffer(offerName, roomCode) {
 // ========== 游戏界面 ==========
 function showGameRoom() {
     lobby.style.display = 'none'; gameRoomEl.style.display = 'flex';
-    roomCodeDisplay.textContent = currentRoom.room_code === 'AI' ? '🤖 人机对战' : '房间: ' + currentRoom.room_code;
+    roomCodeDisplay.textContent = currentRoom.room_code === 'AI' ? '人机对战' : '房间: ' + currentRoom.room_code;
     blackNameEl.textContent = currentRoom.black_player || '等待中'; whiteNameEl.textContent = currentRoom.white_player || '等待中';
     if (!game) game = new GomokuOnline();
     game.reset(currentRoom);
@@ -348,25 +349,25 @@ class GomokuOnline {
         gameHint.textContent = ''; winModal.style.display = 'none';
         turnIndicator.className = 'turn-display black-turn'; currentPlayerText.textContent = '黑棋走子';
         blackCard.classList.add('active-player'); whiteCard.classList.remove('active-player');
-        if (roomData && roomData.status === 'waiting') { gameHint.textContent = '等待对手加入...'; gameStatusDiv.textContent = '⏳ 等待中'; }
+        if (roomData && roomData.status === 'waiting') { gameHint.textContent = '等待对手加入...'; gameStatusDiv.textContent = '等待中'; }
         this.drawBoard();
     }
 
     onGameStart() {
         if (this.gameStarted) return;
         this.gameStarted = true; this.gameStartTime = Date.now(); this.startTimer();
-        gameStatusDiv.textContent = '🎯 游戏进行中'; gameStatusDiv.className = 'status-display';
+        gameStatusDiv.textContent = '游戏进行中'; gameStatusDiv.className = 'status-display';
         gameHint.textContent = this.myColor === 'black' ? '你执黑，请落子' : '你执白，等待黑棋落子';
         this.startTurnTimer();
     }
 
     onGameEnd(data) {
         this.gameOver = true; this.stopTimer();
-        gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
+        gameStatusDiv.textContent = '游戏结束'; gameStatusDiv.className = 'status-display win';
         gameHint.textContent = '游戏结束';
         const wn = data.winner || '';
         const isMe = currentUser && wn === currentUser.username;
-        winnerDisplay.textContent = isMe ? '🎉 你赢了！' : (wn ? '很遗憾，你输了，' + wn + ' 获胜' : '游戏结束');
+        winnerDisplay.textContent = isMe ? '你赢了！' : (wn ? '很遗憾，你输了，' + wn + ' 获胜' : '游戏结束');
         winDescription.textContent = '经过 ' + this.moveCount + ' 步';
         winModal.style.display = 'flex'; this.drawBoard();
     }
@@ -500,13 +501,13 @@ class GomokuOnline {
             moveCountEl.textContent = this.moveCount;
             if (this.checkLocalWin(x, y, 'black')) {
                 this.gameOver = true; this.stopTimer();
-                gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
-                gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '🎉 你赢了！';
+                gameStatusDiv.textContent = '游戏结束'; gameStatusDiv.className = 'status-display win';
+                gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '你赢了！';
                 winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
             } else if (this.moveCount >= 225) {
                 this.gameOver = true; this.stopTimer();
-                gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
-                gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '🤝 平局！';
+                gameStatusDiv.textContent = '游戏结束'; gameStatusDiv.className = 'status-display win';
+                gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '平局！';
                 winDescription.textContent = '棋盘已满'; winModal.style.display = 'flex';
             } else {
                 this.currentTurn = 'white'; gameHint.textContent = '电脑思考中...';
@@ -522,14 +523,14 @@ class GomokuOnline {
             moveCountEl.textContent = this.moveCount;
             if (data.game_over) {
                 this.gameOver = true; this.stopTimer();
-                gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
+                gameStatusDiv.textContent = '游戏结束'; gameStatusDiv.className = 'status-display win';
                 gameHint.textContent = '游戏结束';
                 if (data.draw) {
-                    winnerDisplay.textContent = '🤝 平局！';
+                    winnerDisplay.textContent = '平局！';
                     winDescription.textContent = '棋盘已满';
                 } else {
                     const wn = data.winner || '';
-                    winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '🎉 你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
+                    winnerDisplay.textContent = (currentUser && wn === currentUser.username) ? '你赢了！' : ('很遗憾，你输了，' + wn + ' 获胜');
                     winDescription.textContent = '经过 ' + this.moveCount + ' 步';
                 }
                 winModal.style.display = 'flex';
@@ -749,8 +750,8 @@ class GomokuOnline {
         moveCountEl.textContent = this.moveCount;
         if (this.checkLocalWin(x, y, 'white')) {
             this.gameOver = true; this.stopTimer();
-            gameStatusDiv.textContent = '🏆 游戏结束'; gameStatusDiv.className = 'status-display win';
-            gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '💪 电脑获胜';
+            gameStatusDiv.textContent = '游戏结束'; gameStatusDiv.className = 'status-display win';
+            gameHint.textContent = '游戏结束'; winnerDisplay.textContent = '电脑获胜';
             winDescription.textContent = '经过 ' + this.moveCount + ' 步'; winModal.style.display = 'flex';
         } else { this.currentTurn = 'black'; gameHint.textContent = '轮到你了！'; }
         this.updateTurnUI(); this.drawBoard();
