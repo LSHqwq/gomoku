@@ -140,7 +140,7 @@ async function loadRoomList() {
         if (rooms.length === 0) { roomList.innerHTML = '<p class="room-empty">暂无可用房间</p>'; return; }
         roomList.innerHTML = rooms.map(room => `
             <div class="room-item" onclick="quickJoin('${room.room_code}')">
-                <div class="room-item-info"><span class="room-item-code">${room.room_code}</span><span class="room-item-host">👤 ${room.host_name}</span></div>
+                <div class="room-item-info"><span class="room-item-code">${room.room_code}</span><span class="room-item-host">${room.host_name}</span></div>
                 <span class="room-item-join">加入 →</span>
             </div>`).join('');
     } catch (err) { roomList.innerHTML = '<p class="room-empty">加载失败</p>'; }
