@@ -71,6 +71,7 @@ const gameHint = document.getElementById('game-hint');
 const leaveRoomBtn = document.getElementById('leave-room-btn');
 const restartBtn = document.getElementById('restart-btn');
 const drawBtn = document.getElementById('draw-btn');
+const undoBtn = document.getElementById('undo-btn');
 const winModal = document.getElementById('win-modal');
 const winnerDisplay = document.getElementById('winner-display');
 const winDescription = document.getElementById('win-description');
@@ -99,36 +100,17 @@ async function api(path, method = 'GET', body = null) {
 // ========== WebSocket ==========
 function connectWebSocket(roomCode) {
     disconnectWebSocket();
-    
     ws = new WebSocket(`${WS_BASE}?room=${roomCode}&token=${authToken}`);
-    
-    ws.onopen = () => {
-        console.log('WebSocket 已连接');
-    };
-    
+    ws.onopen = () => console.log('WebSocket 已连接');
     ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            handleWSMessage(data);
-        } catch (err) {
-            console.error('WS消息解析失败:', err);
-        }
+        try { handleWSMessage(JSON.parse(event.data)); } catch (err) { console.error(err); }
     };
-    
-    ws.onclose = () => {
-        console.log('WebSocket 已断开');
-    };
-    
-    ws.onerror = (err) => {
-        console.error('WebSocket 错误:', err);
-    };
+    ws.onclose = () => console.log('WebSocket 已断开');
+    ws.onerror = (err) => console.error('WebSocket 错误:', err);
 }
 
 function disconnectWebSocket() {
-    if (ws) {
-        ws.close();
-        ws = null;
-    }
+    if (ws) { ws.close(); ws = null; }
 }
 
 function handleWSMessage(data) {
@@ -136,30 +118,32 @@ function handleWSMessage(data) {
     
     switch (data.type) {
         case 'player_joined':
-        // 对方加入
-        if (currentRoom.status === 'waiting') {
-            currentRoom.status = 'playing';
-            currentRoom.white_player = data.white_player;
-            whiteNameEl.textContent = data.white_player;
-            game.myColor = 'black';
-            game.onGameStart();
-        }
-        break;
+            if (currentRoom) {
+                currentRoom.status = 'playing';
+                if (data.white_player) currentRoom.white_player = data.white_player;
+                if (data.black_player) currentRoom.black_player = data.black_player;
+                whiteNameEl.textContent = data.white_player || '等待中';
+                blackNameEl.textContent = data.black_player || '等待中';
+                if (game.myColor === 'black') {
+                    game.gameStarted = true;
+                    game.gameStartTime = Date.now();
+                    game.startTimer();
+                    game.onGameStart();
+                }
+            }
+            break;
             
         case 'move':
-            // 对方落子
             game.syncFromServer(data);
             break;
             
         case 'restart':
-            // 对方重新开始
             winModal.style.display = 'none';
             game.reset(currentRoom);
             game.onGameStart();
             break;
             
         case 'draw_offer':
-            // 对方求和
             if (!drawModalShown && !game.gameOver) {
                 drawModalShown = true;
                 showDrawOffer(data.from, currentRoom.room_code);
@@ -167,7 +151,6 @@ function handleWSMessage(data) {
             break;
             
         case 'draw_agreed':
-            // 求和同意
             game.gameOver = true;
             game.stopTimer();
             gameStatusDiv.textContent = '游戏结束';
@@ -181,18 +164,45 @@ function handleWSMessage(data) {
             break;
             
         case 'draw_rejected':
-            // 求和被拒
             drawModalShown = false;
             gameHint.textContent = '对方拒绝了求和';
             break;
             
+        case 'undo_offer':
+            if (!game.gameOver) {
+                showUndoOffer(data.from, currentRoom.room_code);
+            }
+            break;
+            
+        case 'undo_agreed':
+            winModal.style.display = 'none';
+            game.gameOver = false;
+            game.pieces = JSON.parse(JSON.stringify(data.board_state));
+            game.currentTurn = data.current_turn;
+            game.moveCount = (data.move_history || []).length;
+            moveCountEl.textContent = game.moveCount;
+            if (data.move_history && data.move_history.length > 0) {
+                const last = data.move_history[data.move_history.length - 1];
+                game.lastMove = { x: last.x, y: last.y };
+            } else {
+                game.lastMove = null;
+            }
+            game.updateTurnUI();
+            game.drawBoard();
+            gameHint.textContent = '悔棋成功';
+            showToast('悔棋成功');
+            break;
+            
+        case 'undo_rejected':
+            gameHint.textContent = '对方拒绝了悔棋';
+            showToast('拒绝悔棋');
+            break;
+            
         case 'player_left':
-            // 对方离开
-            showModal({ title: '对方离开', message: '对方离开了房间', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { disconnectWebSocket(); currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
+            showModal({ title: '对方离开', message: '有人离开房间', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { disconnectWebSocket(); currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
             break;
             
         case 'timeout':
-            // 超时
             showModal({ title: '超时', message: '房间因长时间无活动已关闭', buttons: [{ text: '返回大厅', bg: '#667eea', onClick: () => { disconnectWebSocket(); currentRoom = null; if (game) { game.isAI = false; game.cleanup(); } showLobby(); } }] });
             break;
     }
@@ -292,24 +302,26 @@ joinRoomBtn.addEventListener('click', async () => {
     } catch (err) { lobbyError.textContent = err.message; }
 });
 
-// ========== 求和弹窗 ==========
+// ========== 弹窗 ==========
 function showDrawOffer(offerName, roomCode) {
     showModal({
         title: '求和请求',
         message: `${offerName} 请求和棋，是否同意？`,
         buttons: [
-            { text: '同意', bg: '#48bb78', onClick: async () => {
-                drawModalShown = false;
-                try {
-                    await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: true });
-                } catch (err) {}
-            }},
-            { text: '拒绝', bg: '#f56565', onClick: async () => {
-                drawModalShown = false;
-                try {
-                    await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: false });
-                } catch (err) {}
-            }}
+            { text: '同意', bg: '#48bb78', onClick: async () => { drawModalShown = false; try { await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: true }); } catch (err) {} } },
+            { text: '拒绝', bg: '#f56565', onClick: async () => { drawModalShown = false; try { await api(`/api/rooms/${roomCode}/draw_respond`, 'POST', { accept: false }); } catch (err) {} } }
+        ],
+        autoClose: 30000
+    });
+}
+
+function showUndoOffer(offerName, roomCode) {
+    showModal({
+        title: '悔棋请求',
+        message: `${offerName} 请求悔棋，是否同意？`,
+        buttons: [
+            { text: '同意', bg: '#48bb78', onClick: async () => { try { await api(`/api/rooms/${roomCode}/undo_respond`, 'POST', { accept: true }); } catch (err) {} } },
+            { text: '拒绝', bg: '#f56565', onClick: async () => { try { await api(`/api/rooms/${roomCode}/undo_respond`, 'POST', { accept: false }); } catch (err) {} } }
         ],
         autoClose: 30000
     });
@@ -319,10 +331,12 @@ function showDrawOffer(offerName, roomCode) {
 function showGameRoom() {
     lobby.style.display = 'none'; gameRoomEl.style.display = 'flex';
     roomCodeDisplay.textContent = currentRoom.room_code === 'AI' ? '人机对战' : '房间: ' + currentRoom.room_code;
-    blackNameEl.textContent = currentRoom.black_player || '等待中'; whiteNameEl.textContent = currentRoom.white_player || '等待中';
+    blackNameEl.textContent = currentRoom.black_player || '等待中';
+    whiteNameEl.textContent = currentRoom.white_player || '等待中';
     if (!game) game = new GomokuOnline();
     game.reset(currentRoom);
     if (drawBtn) drawBtn.style.display = currentRoom.room_code === 'AI' ? 'none' : 'flex';
+    if (undoBtn) undoBtn.style.display = currentRoom.room_code === 'AI' ? 'none' : 'flex';
 }
 
 leaveRoomBtn.addEventListener('click', async () => {
@@ -353,9 +367,16 @@ drawBtn.addEventListener('click', async () => {
     try {
         await api(`/api/rooms/${currentRoom.room_code}/draw_offer`, 'POST');
         gameHint.textContent = '已发送求和请求，等待对方回应...';
-    } catch (err) {
-        showToast(err.message);
-    }
+    } catch (err) { showToast(err.message); }
+});
+
+undoBtn.addEventListener('click', async () => {
+    if (!currentRoom || game.isAI || game.gameOver) return;
+    if (game.moveCount === 0) { showToast('还没有落子，无法悔棋'); return; }
+    try {
+        await api(`/api/rooms/${currentRoom.room_code}/undo_offer`, 'POST');
+        gameHint.textContent = '已发送悔棋请求，等待对方回应...';
+    } catch (err) { showToast(err.message); }
 });
 
 // ========== 游戏类 ==========
@@ -421,9 +442,7 @@ class GomokuOnline {
                 gameStatusDiv.textContent = '游戏结束'; gameStatusDiv.className = 'status-display win';
                 winnerDisplay.textContent = '平局！'; winDescription.textContent = '棋盘已满';
                 winModal.style.display = 'flex'; this.drawBoard();
-            } else {
-                this.onGameEnd(data);
-            }
+            } else { this.onGameEnd(data); }
         } else {
             gameHint.textContent = this.myColor === this.currentTurn ? '轮到你了！' : '等待对手落子...';
             this.turnSeconds = 300; this.startTurnTimer();
@@ -814,6 +833,7 @@ class GomokuOnline {
 
 window.addEventListener('DOMContentLoaded', () => {
     if (authToken) {
-        api('/api/me').then(u => { currentUser = u; showLobby(); }).catch(() => { localStorage.removeItem('token'); authToken = ''; showAuthModal(); });
+        api('/api/me').then(u => { currentUser = u; showLobby(); })
+        .catch(() => { localStorage.removeItem('token'); authToken = ''; showAuthModal(); });
     } else showAuthModal();
 });
