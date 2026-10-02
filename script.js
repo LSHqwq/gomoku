@@ -136,13 +136,15 @@ function handleWSMessage(data) {
     
     switch (data.type) {
         case 'player_joined':
-            // 对方加入
-            if (currentRoom.status === 'waiting') {
-                currentRoom.status = 'playing';
-                game.myColor = 'black';
-                game.onGameStart();
-            }
-            break;
+        // 对方加入
+        if (currentRoom.status === 'waiting') {
+            currentRoom.status = 'playing';
+            currentRoom.white_player = data.white_player;
+            whiteNameEl.textContent = data.white_player;
+            game.myColor = 'black';
+            game.onGameStart();
+        }
+        break;
             
         case 'move':
             // 对方落子
